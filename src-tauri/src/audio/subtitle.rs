@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(feature = "subtitles")]
 use std::time::Duration;
 
 const SR: usize = 16_000;
@@ -40,6 +41,7 @@ pub struct SubStatus {
     pub models_dir: String,
 }
 
+#[allow(dead_code)]
 struct Utterance {
     t0: f64,
     t1: f64,
