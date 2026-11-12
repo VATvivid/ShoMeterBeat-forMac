@@ -29,17 +29,35 @@ export interface Source {
   waveOverview(seconds: number): Promise<WaveOverview | null>;
   /** Exports absolute frames [start, end) of the history to a WAV; resolves to frames written. */
   waveExport(start: number, end: number, dst: string): Promise<number>;
-  /** Average spectrum (dB, N_SPEC points) of a WAV file. */
+  /** Average spectrum (dB, N_SPEC points) of an audio file. */
   analyzeReference(path: string): Promise<number[]>;
+  /** Decoded PCM (≤ 10 min) for the Player. */
+  loadAudio(path: string): Promise<LoadedAudio | null>;
+  /** Whole-file loudness / dynamics / tempo. */
+  analyzeFile(path: string, priorBpm?: number): Promise<FileAnalysis>;
 }
 
-export interface WaveOverview { sr: number; head: number; cols: Float32Array /* min,max,rms triples, oldest first */ }
+export interface LoadedAudio { sr: number; channels: number; frames: number; samples: Float32Array /* interleaved */ }
+export interface FileAnalysis {
+  duration: number; sample_rate: number; channels: number; lufs_i: number; lra: number; true_peak: number;
+  sample_peak: number; rms: number; crest: number; bpm: number; bpm_confidence: number; bpm_agreement: number;
+}
+
+export function parseLoadedAudio(buf: ArrayBuffer): LoadedAudio | null {
+  const v = new Float32Array(buf);
+  if (v.length < 4 || v[0] !== 4242) return null;
+  const channels = v[2] | 0, frames = v[3] | 0;
+  return { sr: v[1], channels, frames, samples: v.subarray(4, 4 + frames * channels) };
+}
+
+export interface WaveOverview { sr: number; head: number; cols: Float32Array /* (min,max,rms,flux) per column, oldest first */ }
+export const OV_STRIDE = 4;
 
 export function parseOverview(buf: ArrayBuffer): WaveOverview | null {
   const v = new Float32Array(buf);
   if (v.length < 4) return null;
   const n = v[1] | 0;
-  return { sr: v[0], head: v[2] * 65536 + v[3], cols: v.subarray(4, 4 + n * 3) };
+  return { sr: v[0], head: v[2] * 65536 + v[3], cols: v.subarray(4, 4 + n * OV_STRIDE) };
 }
 
 class TauriSource implements Source {
@@ -63,6 +81,8 @@ class TauriSource implements Source {
   async waveOverview(seconds: number) { return parseOverview(await invoke<ArrayBuffer>("wave_overview", { seconds })); }
   waveExport(start: number, end: number, dst: string) { return invoke<number>("wave_export", { start, end, dst }); }
   analyzeReference(path: string) { return invoke<number[]>("analyze_reference", { path }); }
+  async loadAudio(path: string) { return parseLoadedAudio(await invoke<ArrayBuffer>("load_audio", { path })); }
+  analyzeFile(path: string, priorBpm?: number) { return invoke<FileAnalysis>("analyze_file", { path, priorBpm }); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -173,15 +193,24 @@ class MockSource implements Source {
       const t = this.whead / 100;
       const beat = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2)), 8);
       const a = 0.08 + 0.5 * beat + 0.05 * Math.random();
-      this.wcols.push(-a * (0.7 + 0.3 * Math.random()), a, a * 0.6);
+      // flux: a sharp pulse on each beat (120 BPM) with a weaker offbeat
+      const beatPos = (t * 2) % 1;
+      const fl = (beatPos < 0.03 ? 8 : 0) + (((t * 2 + 0.5) % 1) < 0.03 ? 3 : 0) + Math.random() * 0.4;
+      this.wcols.push(-a * (0.7 + 0.3 * Math.random()), a, a * 0.6, fl);
       this.whead++;
     }
-    if (this.wcols.length > 3 * 120 * 100) this.wcols.splice(0, this.wcols.length - 3 * 120 * 100);
-    const n = Math.min(this.wcols.length / 3, Math.round(seconds * 100));
-    return { sr: 48000, head: this.whead * 480, cols: new Float32Array(this.wcols.slice(this.wcols.length - n * 3)) };
+    if (this.wcols.length > 4 * 120 * 100) this.wcols.splice(0, this.wcols.length - 4 * 120 * 100);
+    const n = Math.min(this.wcols.length / 4, Math.round(seconds * 100));
+    return { sr: 48000, head: this.whead * 480, cols: new Float32Array(this.wcols.slice(this.wcols.length - n * 4)) };
   }
   async waveExport() { return 0; }
   async analyzeReference() { return Array.from({ length: N_SPEC }, (_, i) => -30 - 4.5 * Math.log2(pointFreq(i) / 1000) + 3 * Math.sin(i / 9)); }
+  async loadAudio(): Promise<LoadedAudio | null> {
+    const sr = 48000, frames = sr * 8, samples = new Float32Array(frames * 2);
+    for (let i = 0; i < frames; i++) { const t = i / sr; const env = 0.6 * Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2)), 6) + 0.1; const s = env * Math.sin(2 * Math.PI * 110 * t); samples[2 * i] = s; samples[2 * i + 1] = s * 0.9; }
+    return { sr, channels: 2, frames, samples };
+  }
+  async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9 }; }
 }
 
 export function createSource(): Source {

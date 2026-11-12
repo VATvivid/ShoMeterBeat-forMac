@@ -55,14 +55,14 @@ export function defaultLayout(kind: LayoutKind): Layout {
     const row = (x: number, w: number) => ({ x, y: 0, w, h: 1, on: true });
     return {
       spectrum: row(0, 8), loudness: row(8, 5), levels: row(13, 2), stereo: row(15, 3), scope: row(18, 3), spectrogram: row(21, 3),
-      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false },
+      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false }, player: { x: 0, y: 0, w: 6, h: 1, on: false },
     };
   }
   if (kind === "dockv") {
     const col = (y: number, h: number) => ({ x: 0, y, w: 1, h, on: true });
     return {
       spectrum: col(0, 6), loudness: col(6, 6), levels: col(12, 4), stereo: col(16, 4), scope: col(20, 4),
-      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false },
+      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false },
     };
   }
   return {
@@ -79,6 +79,7 @@ export function defaultLayout(kind: LayoutKind): Layout {
     dynamics: { x: 12, y: 16, w: 3, h: 7, on: true },
     stereobands: { x: 15, y: 16, w: 4, h: 7, on: true },
     transient: { x: 19, y: 16, w: 5, h: 7, on: true },
+    player: { x: 0, y: 23, w: 12, h: 7, on: true },
   };
 }
 

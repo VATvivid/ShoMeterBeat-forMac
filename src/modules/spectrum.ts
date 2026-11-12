@@ -38,25 +38,31 @@ export class SpectrumModule implements Module {
       { type: "toggle", label: "피크 홀드", value: this.showHold, onChange: (v) => setModSetting(this.id, "hold", v) },
       { type: "select", label: "레퍼런스", value: names.includes(this.refName) ? this.refName : "", options: [{ value: "", label: "없음" }, ...names.map((n) => ({ value: n, label: n }))], onChange: (v) => setModSetting(this.id, "ref", v) },
       { type: "toggle", label: "레퍼런스 레벨 자동 맞춤", value: this.autoLevel, onChange: (v) => setModSetting(this.id, "refAuto", v) },
-      { type: "action", label: "레퍼런스 추가… (WAV)", onClick: () => this.addReference() },
+      { type: "action", label: "레퍼런스 추가… (파일 선택 또는 타일에 드롭)", onClick: () => this.addReference() },
       ...(names.includes(this.refName) ? [{ type: "action", label: `레퍼런스 삭제: ${this.refName}`, onClick: () => this.deleteReference(this.refName) } as SettingItem] : []),
     ];
   }
 
   private setNote(s: string) { this.note = s; this.noteUntil = performance.now() + 6000; }
 
-  private async addReference() {
+  onDrop(paths: string[]) {
+    if (paths[0]) this.addReference(paths[0]);
+  }
+
+  private async addReference(dropped?: string) {
     if (this.busy) return;
     this.busy = true;
     try {
-      let path: string | null = null;
-      if (inTauri) {
-        const r = await openDialog({ title: "레퍼런스 WAV 선택", multiple: false, filters: [{ name: "WAV", extensions: ["wav"] }] });
-        path = typeof r === "string" ? r : null;
-        if (!path) return;
-      } else path = "mock.wav";
+      let path: string | null = dropped ?? null;
+      if (!path) {
+        if (inTauri) {
+          const r = await openDialog({ title: "레퍼런스 오디오 선택", multiple: false, filters: [{ name: "Audio", extensions: ["wav", "aif", "aiff", "flac", "mp3", "ogg", "m4a", "aac"] }] });
+          path = typeof r === "string" ? r : null;
+          if (!path) return;
+        } else path = "mock.wav";
+      }
       const spec = await getSource()!.analyzeReference(path);
-      const name = path.replace(/\\/g, "/").split("/").pop()!.replace(/\.wav$/i, "");
+      const name = path.replace(/\\/g, "/").split("/").pop()!.replace(/\.[^.]+$/, "");
       const refs = { ...this.presets, [name]: spec.map((v) => Math.round(v * 10) / 10) };
       setModSetting(this.id, "refs", refs);
       setModSetting(this.id, "ref", name);

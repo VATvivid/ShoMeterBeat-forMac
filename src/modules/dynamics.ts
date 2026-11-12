@@ -3,15 +3,18 @@ import { font, theme, withAlpha } from "../theme";
 import { ballistic, fmtDb, type DrawCtx, type Module, type SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
 
-// Dynamics meter in the Levels style: three vertical bars.
-//  Crest = sample peak − RMS (short window)        → transient density / punch
-//  PSR   = max true peak (last 3 s) − short-term LUFS → short-term dynamics (mastering)
-//  PLR   = session max true peak − integrated LUFS → overall dynamics
+// Dynamics meter in the Levels style: vertical bars with, beside each bar, a
+// distribution profile of the value over the last N seconds (1 dB bins) and a
+// median marker — so you can see where the material usually sits, not just now.
+//  Crest = sample peak − RMS (short window)           → transient density / punch
+//  PSR   = max true peak (last 3 s) − short-term LUFS → short-term dynamics
+//  PLR   = session max true peak − integrated LUFS    → overall dynamics
 // Zones: < 6 dB squashed (red), 6–10 tight (amber), > 10 open (signal colour).
 
 const SCALE_TOP = 30, SCALE_BOTTOM = 0;
 const HOLD_S = 2.0;
 const TP_WINDOW_S = 3;
+const BINS = 30;
 
 export class DynamicsModule implements Module {
   readonly id = "dynamics";
@@ -22,13 +25,18 @@ export class DynamicsModule implements Module {
   private tpHist: { t: number; v: number }[] = [];
   private clock = 0;
   private crestSmooth = 0;
+  /** Per bar: samples (value, time) for the distribution window. */
+  private samples: { t: number; v: number }[][] = [[], [], []];
+  private sampleAcc = 0;
 
   private get showPLR() { return modSetting(this.id, "plr", true); }
+  private get histSeconds() { return modSetting(this.id, "hist", 60); }
 
   settings(): SettingItem[] {
     return [
+      { type: "select", label: "분포 구간", value: String(this.histSeconds), options: [15, 30, 60, 120, 300].map((v) => ({ value: String(v), label: v >= 60 ? `${v / 60}분` : `${v}초` })), onChange: (v) => setModSetting(this.id, "hist", Number(v)) },
       { type: "toggle", label: "PLR (세션 누적) 표시", value: this.showPLR, onChange: (v) => setModSetting(this.id, "plr", v) },
-      { type: "action", label: "홀드 지우기", onClick: () => { this.hold = [0, 0, 0]; } },
+      { type: "action", label: "홀드·분포 지우기", onClick: () => { this.hold = [0, 0, 0]; this.samples = [[], [], []]; } },
     ];
   }
 
@@ -42,7 +50,8 @@ export class DynamicsModule implements Module {
     // --- measurements
     const peak = Math.max(f.peak[0], f.peak[1]);
     const rms = 10 * Math.log10((Math.pow(10, f.rms[0] / 10) + Math.pow(10, f.rms[1] / 10)) / 2 + 1e-12);
-    const crestNow = peak > -90 && rms > -90 ? Math.max(0, peak - rms) : 0;
+    const active = rms > -70;
+    const crestNow = peak > -90 && active ? Math.max(0, peak - rms) : 0;
     this.crestSmooth += (crestNow - this.crestSmooth) * Math.min(1, dt * 6);
     const tpNow = Math.max(f.truePeak[0], f.truePeak[1]);
     if (tpNow > -90) this.tpHist.push({ t: this.clock, v: tpNow });
@@ -56,18 +65,28 @@ export class DynamicsModule implements Module {
       if (targets[i] >= this.hold[i]) { this.hold[i] = targets[i]; this.holdAge[i] = 0; }
       else { this.holdAge[i] += dt; if (this.holdAge[i] > HOLD_S) this.hold[i] = ballistic(this.hold[i], targets[i], dt, 6); }
     }
+    // --- distribution samples at 10 Hz while there is signal
+    this.sampleAcc += dt;
+    if (this.sampleAcc >= 0.1) {
+      this.sampleAcc = 0;
+      if (active) for (let i = 0; i < 3; i++) this.samples[i].push({ t: this.clock, v: targets[i] });
+      const limit = this.histSeconds;
+      for (const s of this.samples) while (s.length && this.clock - s[0].t > limit) s.shift();
+    }
 
-    // --- layout (fluid, Levels-like)
+    // --- layout (fluid): [bar][profile] groups
     const bars = this.showPLR ? 3 : 2;
-    const narrow = w < 70, short = h < 90;
+    const narrow = w < 90, short = h < 90;
     const padL = narrow ? 4 : 26, padT = short ? 8 : 14, padB = short ? 6 : 34;
     const y0 = padT, y1 = h - padB, ph = y1 - y0;
     if (ph < 10) return;
     const yOf = (v: number) => y0 + ((SCALE_TOP - Math.min(SCALE_TOP, Math.max(SCALE_BOTTOM, v))) / (SCALE_TOP - SCALE_BOTTOM)) * ph;
     const avail = w - padL - 4;
-    const gap = Math.max(3, Math.min(8, avail * 0.12));
-    const barW = Math.max(4, Math.min(14, (avail - gap * (bars - 1)) / bars));
-    const totalW = barW * bars + gap * (bars - 1);
+    const gap = Math.max(4, Math.min(10, avail * 0.08));
+    const groupW = (avail - gap * (bars - 1)) / bars;
+    const barW = Math.max(4, Math.min(12, groupW * 0.35));
+    const profW = Math.max(0, Math.min(40, groupW - barW - 3));
+    const totalW = bars * (barW + 3 + profW) + gap * (bars - 1);
     const x0 = padL + Math.max(0, (w - padL - totalW) / 2);
 
     // scale + zones
@@ -84,26 +103,62 @@ export class DynamicsModule implements Module {
 
     const names = ["CREST", "PSR", "PLR"];
     for (let i = 0; i < bars; i++) {
-      const x = x0 + i * (barW + gap);
+      const gx = x0 + i * (barW + 3 + profW + gap);
       const v = this.vals[i];
+      // bar
       ctx.fillStyle = theme("bg-3");
-      ctx.fillRect(x, y0, barW, ph);
+      ctx.fillRect(gx, y0, barW, ph);
       const col = v < 6 ? theme("clip") : v < 10 ? theme("peak") : theme("sig");
       const yv = yOf(v);
       ctx.fillStyle = col;
-      ctx.fillRect(x, yv, barW, y1 - yv);
+      ctx.fillRect(gx, yv, barW, y1 - yv);
       const yh = Math.round(yOf(this.hold[i])) + 0.5;
       ctx.strokeStyle = theme("fg-0"); ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, yh); ctx.lineTo(x + barW, yh); ctx.stroke(); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(gx, yh); ctx.lineTo(gx + barW, yh); ctx.stroke(); ctx.lineWidth = 1;
+      // distribution profile (histogram, 1 dB bins) to the right of the bar
+      if (profW >= 8) {
+        const px = gx + barW + 3;
+        const s = this.samples[i];
+        if (s.length >= 5) {
+          const hist = new Float32Array(BINS);
+          for (const e of s) hist[Math.min(BINS - 1, Math.max(0, Math.floor(e.v)))]++;
+          let mx = 1; for (const c of hist) mx = Math.max(mx, c);
+          ctx.fillStyle = withAlpha(col, 0.35);
+          ctx.strokeStyle = withAlpha(theme("fg-1"), 0.6);
+          ctx.beginPath();
+          ctx.moveTo(px, yOf(0));
+          for (let b = 0; b < BINS; b++) {
+            const yTop = yOf(b + 1), yBot = yOf(b);
+            const wdt = (hist[b] / mx) * profW;
+            ctx.lineTo(px + wdt, yBot); ctx.lineTo(px + wdt, yTop);
+          }
+          ctx.lineTo(px, yOf(BINS)); ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          // median marker
+          const sorted = s.map((e) => e.v).sort((a, b) => a - b);
+          const med = sorted[sorted.length >> 1];
+          const ym = Math.round(yOf(med)) + 0.5;
+          ctx.strokeStyle = theme("target"); ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(px, ym); ctx.lineTo(px + profW, ym); ctx.stroke(); ctx.lineWidth = 1;
+          if (!short && profW >= 22) {
+            ctx.fillStyle = theme("target"); ctx.font = font(9); ctx.textAlign = "left"; ctx.textBaseline = "bottom";
+            ctx.fillText(`~${med.toFixed(0)}`, px + 1, ym - 1);
+          }
+        } else {
+          ctx.strokeStyle = withAlpha(theme("fg-2"), 0.4);
+          ctx.strokeRect(px + 0.5, y0 + 0.5, profW - 1, ph - 1);
+        }
+      }
+      // labels
       if (!short) {
-        ctx.fillStyle = theme("fg-1"); ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = font(9, 600);
-        ctx.fillText(names[i], x + barW / 2, y1 + 4);
-        if (!narrow) { ctx.fillStyle = theme("fg-0"); ctx.font = font(11, 500); ctx.fillText(fmtDb(v, 1).replace("+", ""), x + barW / 2, y1 + 15); }
+        ctx.fillStyle = theme("fg-1"); ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = font(9, 600);
+        ctx.fillText(names[i], gx, y1 + 4);
+        if (!narrow) { ctx.fillStyle = theme("fg-0"); ctx.font = font(11, 500); ctx.fillText(fmtDb(v, 1).replace("+", ""), gx, y1 + 15); }
       }
     }
     if (!narrow && !short) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "top";
-      ctx.fillText("dB", 4, 2);
+      ctx.fillText(`dB · 분포 ${this.histSeconds >= 60 ? `${this.histSeconds / 60}분` : `${this.histSeconds}초`}`, 4, 2);
     }
   }
 }

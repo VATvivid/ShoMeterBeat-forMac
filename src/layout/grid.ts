@@ -233,6 +233,30 @@ export class Grid {
   onChange: (() => void) | null = null;
   onToggleEdit: (() => void) | null = null;
 
+  /** Tile element under a point (CSS px, viewport coords), if any. */
+  tileAt(x: number, y: number): { id: string; el: HTMLElement } | null {
+    const el = document.elementFromPoint(x, y)?.closest(".tile") as HTMLElement | null;
+    if (!el?.dataset.id) return null;
+    return { id: el.dataset.id, el };
+  }
+
+  /** Deliver dropped files to the module under the point. Returns whether it was handled. */
+  dropAt(x: number, y: number, paths: string[]): boolean {
+    const t = this.tileAt(x, y);
+    const tile = t && this.tiles.get(t.id);
+    if (!tile?.module.onDrop) return false;
+    tile.module.onDrop(paths);
+    return true;
+  }
+
+  setDropHover(x: number | null, y: number | null) {
+    for (const t of this.tiles.values()) t.el.classList.remove("drop-hover");
+    if (x === null || y === null) return;
+    const t = this.tileAt(x, y);
+    const tile = t && this.tiles.get(t.id);
+    if (tile?.module.onDrop) tile.el.classList.add("drop-hover");
+  }
+
   private bindDrag(t: Tile, target: HTMLElement, mode: "move" | "resize") {
     target.addEventListener("pointerdown", (e) => {
       if (!this.editing || e.button !== 0) return;

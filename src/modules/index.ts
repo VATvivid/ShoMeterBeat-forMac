@@ -12,6 +12,7 @@ import { WaveformModule } from "./waveform";
 import { DynamicsModule } from "./dynamics";
 import { TransientModule } from "./transient";
 import { StereoBandsModule } from "./stereobands";
+import { PlayerModule } from "./player";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -29,6 +30,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   dynamics: () => new DynamicsModule(),
   transient: () => new TransientModule(),
   stereobands: () => new StereoBandsModule(),
+  player: () => new PlayerModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -45,6 +47,7 @@ export const MODULE_TITLES: Record<string, string> = {
   dynamics: "Dynamics (Crest · PSR · PLR)",
   transient: "Transient (온셋 · BPM)",
   stereobands: "Stereo Bands (대역별 폭)",
+  player: "Player (파일 재생 · 분석)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */

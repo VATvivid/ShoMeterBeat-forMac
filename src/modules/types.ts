@@ -25,6 +25,8 @@ export interface Module {
   resize?(w: number, h: number): void;
   /** Called once with the tile body element (for pointer interaction / overlays). */
   mount?(body: HTMLElement, isEditing: () => boolean): void;
+  /** Files dropped onto this tile (absolute paths). */
+  onDrop?(paths: string[]): void;
 }
 
 export type ModuleFactory = () => Module;

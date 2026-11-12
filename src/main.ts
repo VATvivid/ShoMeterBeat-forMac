@@ -167,6 +167,27 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") setEditing(false);
 });
 
+// ---- file drag & drop (Tauri window events; HTML5 fallback in the browser) --
+if (inTauri) {
+  import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => {
+    getCurrentWebview().onDragDropEvent((e) => {
+      const p = e.payload;
+      const scale = window.devicePixelRatio || 1;
+      if (p.type === "over" || p.type === "enter") grid.setDropHover(p.position.x / scale, p.position.y / scale);
+      else if (p.type === "leave") grid.setDropHover(null, null);
+      else if (p.type === "drop") {
+        grid.setDropHover(null, null);
+        const ok = grid.dropAt(p.position.x / scale, p.position.y / scale, p.paths);
+        if (!ok) { stState.textContent = "여기엔 놓을 수 없습니다 — Player 또는 Spectrum 타일에 놓으세요"; stState.className = ""; stateHoldUntil = performance.now() + 4000; }
+      }
+    }).catch((err) => console.error(err));
+  }).catch((err) => console.error(err));
+} else {
+  document.addEventListener("dragover", (e) => { e.preventDefault(); grid.setDropHover(e.clientX, e.clientY); });
+  document.addEventListener("dragleave", () => grid.setDropHover(null, null));
+  document.addEventListener("drop", (e) => { e.preventDefault(); grid.setDropHover(null, null); grid.dropAt(e.clientX, e.clientY, ["(browser-preview).wav"]); });
+}
+
 // ---- device select ---------------------------------------------------------
 const deviceSel = $<HTMLSelectElement>("device-select");
 // Option value = "<mode>|<name>". "auto|" = default output loopback + DAW plugins.

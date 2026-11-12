@@ -11,7 +11,9 @@ pub mod analyzer;
 pub mod capture;
 pub mod frame;
 pub mod loudness;
+pub mod decode;
 pub mod recorder;
+pub mod tempo;
 pub mod voice;
 pub mod wave;
 

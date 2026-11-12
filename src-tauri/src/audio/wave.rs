@@ -3,7 +3,12 @@
 //! min/max envelope (for drawing). Positions are absolute frame counts (`head`).
 
 use hound::{SampleFormat, WavSpec, WavWriter};
+use rustfft::num_complex::Complex;
+use rustfft::{Fft, FftPlanner};
 use std::path::Path;
+use std::sync::Arc;
+
+const FLUX_N: usize = 2048;
 
 pub const CAP_SECS: usize = 120;
 pub const COLS_PER_SEC: usize = 100;
@@ -18,7 +23,12 @@ pub struct WaveHistory {
     cols_min: Vec<f32>,
     cols_max: Vec<f32>,
     cols_rms: Vec<f32>,
+    cols_flux: Vec<f32>,
     cols_cap: usize,
+    fft: Arc<dyn Fft<f32>>,
+    window: Vec<f32>,
+    scratch: Vec<Complex<f32>>,
+    prev_log: Vec<f32>,
     cur_min: f32,
     cur_max: f32,
     cur_sq: f32,
@@ -37,7 +47,12 @@ impl WaveHistory {
             cols_min: Vec::new(),
             cols_max: Vec::new(),
             cols_rms: Vec::new(),
+            cols_flux: Vec::new(),
             cols_cap: CAP_SECS * COLS_PER_SEC,
+            fft: FftPlanner::<f32>::new().plan_fft_forward(FLUX_N),
+            window: (0..FLUX_N).map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / FLUX_N as f32).cos()).collect(),
+            scratch: vec![Complex::new(0.0, 0.0); FLUX_N],
+            prev_log: vec![0.0; FLUX_N / 2 + 1],
             cur_min: 0.0,
             cur_max: 0.0,
             cur_sq: 0.0,
@@ -70,23 +85,51 @@ impl WaveHistory {
                 self.cols_min.push(self.cur_min);
                 self.cols_max.push(self.cur_max);
                 self.cols_rms.push((self.cur_sq / self.cur_n as f32).sqrt());
+                let flux = self.flux();
+                self.cols_flux.push(flux);
                 if self.cols_min.len() > self.cols_cap {
                     let drop = self.cols_min.len() - self.cols_cap;
                     self.cols_min.drain(..drop);
                     self.cols_max.drain(..drop);
                     self.cols_rms.drain(..drop);
+                    self.cols_flux.drain(..drop);
                 }
                 self.cur_n = 0;
             }
         }
     }
 
-    /// Packed overview: [sr, n, head_hi, head_lo, min0, max0, rms0, min1, max1, rms1, …]
+    /// Spectral flux of the newest FLUX_N mono samples vs the previous column: sum of
+    /// positive log-magnitude increases (onset detection function for tempo/onsets).
+    fn flux(&mut self) -> f32 {
+        if self.head < FLUX_N as u64 {
+            return 0.0;
+        }
+        let start = self.head as usize - FLUX_N;
+        for i in 0..FLUX_N {
+            let idx = ((start + i) % self.cap_frames) * 2;
+            let m = 0.5 * (self.ring[idx] + self.ring[idx + 1]);
+            self.scratch[i] = Complex::new(m * self.window[i], 0.0);
+        }
+        self.fft.process(&mut self.scratch);
+        let mut flux = 0.0f32;
+        for k in 0..=FLUX_N / 2 {
+            let lg = (1.0 + 200.0 * self.scratch[k].norm() * (2.0 / FLUX_N as f32)).ln();
+            let d = lg - self.prev_log[k];
+            if d > 0.0 {
+                flux += d;
+            }
+            self.prev_log[k] = lg;
+        }
+        flux
+    }
+
+    /// Packed overview: [sr, n, head_hi, head_lo, min0, max0, rms0, flux0, min1, …]
     /// for the last `seconds` (n ≤ seconds·100 columns, oldest first).
     pub fn overview(&self, seconds: f32) -> Vec<u8> {
         let want = ((seconds.max(0.1) * COLS_PER_SEC as f32) as usize).min(self.cols_min.len());
         let start = self.cols_min.len() - want;
-        let mut v: Vec<f32> = Vec::with_capacity(4 + want * 3);
+        let mut v: Vec<f32> = Vec::with_capacity(4 + want * 4);
         v.push(self.sr as f32);
         v.push(want as f32);
         v.push((self.head / 65536) as f32);
@@ -95,6 +138,7 @@ impl WaveHistory {
             v.push(self.cols_min[i]);
             v.push(self.cols_max[i]);
             v.push(self.cols_rms[i]);
+            v.push(self.cols_flux[i]);
         }
         let mut bytes = Vec::with_capacity(v.len() * 4);
         for x in v {
@@ -143,7 +187,7 @@ mod tests {
         assert_eq!(v[0], 1000.0);
         assert_eq!(v[1] as usize, 100);
         assert_eq!(v[2] * 65536.0 + v[3], 2000.0);
-        assert_eq!(v.len(), 4 + 100 * 3);
+        assert_eq!(v.len(), 4 + 100 * 4);
         assert!((v[6] - 0.5).abs() < 1e-5); // rms of ±0.5 square
         let dir = std::env::temp_dir().join("re-minimeter-test");
         let dst = dir.join("sel.wav");

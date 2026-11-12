@@ -146,45 +146,89 @@ fn rec_info(engine: State<Engine>) -> audio::recorder::RecInfo {
 
 // ---- reference spectrum --------------------------------------------------------
 
-/// Average spectrum (dB, 256 log points) of a WAV file, for the Spectrum overlay.
-/// Reads up to 120 s. Supports PCM 8/16/24/32-bit and float WAV (hound).
+/// Average spectrum (dB, 256 log points) of an audio file (first 120 s), for the
+/// Spectrum overlay. WAV/AIFF/FLAC/MP3/OGG/AAC via symphonia.
 #[tauri::command]
 fn analyze_reference(path: String) -> Result<Vec<f32>, String> {
-    let mut r = hound::WavReader::open(&path).map_err(|e| format!("WAV 열기 실패: {e}"))?;
-    let spec = r.spec();
-    let ch = spec.channels.max(1) as usize;
-    let max_frames = 120 * spec.sample_rate as usize;
-    let mut mono: Vec<f32> = Vec::new();
-    let mut acc = 0.0f32;
-    let mut k = 0usize;
-    let mut push = |s: f32, mono: &mut Vec<f32>| {
-        acc += s;
-        k += 1;
-        if k == ch {
-            mono.push(acc / ch as f32);
-            acc = 0.0;
-            k = 0;
-        }
-    };
-    match (spec.sample_format, spec.bits_per_sample) {
-        (hound::SampleFormat::Float, _) => {
-            for s in r.samples::<f32>() {
-                push(s.map_err(|e| e.to_string())?, &mut mono);
-                if mono.len() >= max_frames { break; }
-            }
-        }
-        (hound::SampleFormat::Int, bits) => {
-            let scale = 1.0 / ((1u64 << (bits as u64 - 1)) as f32);
-            for s in r.samples::<i32>() {
-                push(s.map_err(|e| e.to_string())? as f32 * scale, &mut mono);
-                if mono.len() >= max_frames { break; }
-            }
-        }
-    }
+    let d = audio::decode::decode(&path, 120.0)?;
+    let mono = d.mono();
     if mono.len() < 8192 {
         return Err("파일이 너무 짧습니다 (0.2초 이상 필요)".into());
     }
-    Ok(audio::analyzer::reference_spectrum(&mono, spec.sample_rate))
+    Ok(audio::analyzer::reference_spectrum(&mono, d.sample_rate))
+}
+
+// ---- player: decode + whole-file analysis -------------------------------------
+
+/// Decoded PCM for the Player module (≤ 10 min): f32 header [4242, sr, channels, frames]
+/// followed by interleaved samples.
+#[tauri::command]
+fn load_audio(path: String) -> Result<tauri::ipc::Response, String> {
+    let d = audio::decode::decode(&path, 600.0)?;
+    let frames = d.frames();
+    let mut bytes = Vec::with_capacity((4 + d.samples.len()) * 4);
+    for x in [4242.0f32, d.sample_rate as f32, d.channels as f32, frames as f32] {
+        bytes.extend_from_slice(&x.to_le_bytes());
+    }
+    for x in &d.samples {
+        bytes.extend_from_slice(&x.to_le_bytes());
+    }
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[derive(serde::Serialize)]
+struct FileAnalysis {
+    duration: f32,
+    sample_rate: u32,
+    channels: usize,
+    lufs_i: f32,
+    lra: f32,
+    true_peak: f32,
+    sample_peak: f32,
+    rms: f32,
+    crest: f32,
+    bpm: f32,
+    bpm_confidence: f32,
+    bpm_agreement: f32,
+}
+
+/// Whole-file loudness / peak / dynamics / tempo (≤ 10 min analysed).
+#[tauri::command]
+fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, String> {
+    use ebur128::{EbuR128, Mode};
+    let d = audio::decode::decode(&path, 600.0)?;
+    let ch = d.channels as u32;
+    let mut e = EbuR128::new(ch, d.sample_rate, Mode::I | Mode::LRA | Mode::TRUE_PEAK).map_err(|e| e.to_string())?;
+    for chunk in d.samples.chunks(48_000 * d.channels) {
+        e.add_frames_f32(chunk).map_err(|e| e.to_string())?;
+    }
+    let db = |v: Result<f64, ebur128::Error>| v.ok().filter(|x| x.is_finite()).map(|x| x as f32).unwrap_or(-120.0);
+    let lin_db = |v: Result<f64, ebur128::Error>| v.ok().filter(|x| *x > 1e-9).map(|x| 20.0 * (x as f32).log10()).unwrap_or(-120.0);
+    let mut tp = -120.0f32;
+    for c in 0..ch {
+        tp = tp.max(lin_db(e.true_peak(c)));
+    }
+    let peak = d.samples.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let rms = (d.samples.iter().map(|v| v * v).sum::<f32>() / d.samples.len().max(1) as f32).sqrt();
+    let peak_db = if peak > 1e-9 { 20.0 * peak.log10() } else { -120.0 };
+    let rms_db = if rms > 1e-9 { 20.0 * rms.log10() } else { -120.0 };
+    let mono = d.mono();
+    let flux = audio::tempo::flux_columns(&mono, d.sample_rate);
+    let t = audio::tempo::estimate(&flux, prior_bpm.unwrap_or(110.0));
+    Ok(FileAnalysis {
+        duration: d.frames() as f32 / d.sample_rate as f32,
+        sample_rate: d.sample_rate,
+        channels: d.channels,
+        lufs_i: db(e.loudness_global()),
+        lra: e.loudness_range().ok().filter(|x| x.is_finite()).map(|x| x as f32).unwrap_or(0.0),
+        true_peak: tp,
+        sample_peak: peak_db,
+        rms: rms_db,
+        crest: peak_db - rms_db,
+        bpm: t.bpm,
+        bpm_confidence: t.confidence,
+        bpm_agreement: t.agreement,
+    })
 }
 
 // ---- waveform history ----------------------------------------------------------
@@ -219,7 +263,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
-            wave_overview, wave_export, analyze_reference
+            wave_overview, wave_export, analyze_reference, load_audio, analyze_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");
