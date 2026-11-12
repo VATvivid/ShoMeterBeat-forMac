@@ -25,6 +25,19 @@ export interface Source {
   recSave(src: string, dst: string): Promise<void>;
   recDiscard(src: string): Promise<void>;
   recDefaultName(): Promise<string>;
+  /** Waveform envelope of the last `seconds`; null when no capture yet. */
+  waveOverview(seconds: number): Promise<WaveOverview | null>;
+  /** Exports absolute frames [start, end) of the history to a WAV; resolves to frames written. */
+  waveExport(start: number, end: number, dst: string): Promise<number>;
+}
+
+export interface WaveOverview { sr: number; head: number; cols: Float32Array /* min,max pairs, oldest first */ }
+
+export function parseOverview(buf: ArrayBuffer): WaveOverview | null {
+  const v = new Float32Array(buf);
+  if (v.length < 4) return null;
+  const n = v[1] | 0;
+  return { sr: v[0], head: v[2] * 65536 + v[3], cols: v.subarray(4, 4 + n * 2) };
 }
 
 class TauriSource implements Source {
@@ -45,6 +58,8 @@ class TauriSource implements Source {
   recSave(src: string, dst: string) { return invoke<void>("rec_save", { src, dst }); }
   recDiscard(src: string) { return invoke<void>("rec_discard", { src }); }
   recDefaultName() { return invoke<string>("rec_default_name"); }
+  async waveOverview(seconds: number) { return parseOverview(await invoke<ArrayBuffer>("wave_overview", { seconds })); }
+  waveExport(start: number, end: number, dst: string) { return invoke<number>("wave_export", { start, end, dst }); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -144,6 +159,24 @@ class MockSource implements Source {
   async recSave() {}
   async recDiscard() {}
   async recDefaultName() { return "re-minimeter_mock.wav"; }
+  private wcols: number[] = [];
+  private whead = 0;
+  async waveOverview(seconds: number): Promise<WaveOverview | null> {
+    // Synthesize envelope columns at 100/s from the mock level.
+    const now = performance.now() / 1000;
+    const target = Math.floor(now * 100);
+    while (this.whead < target) {
+      const t = this.whead / 100;
+      const beat = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2)), 8);
+      const a = 0.08 + 0.5 * beat + 0.05 * Math.random();
+      this.wcols.push(-a * (0.7 + 0.3 * Math.random()), a);
+      this.whead++;
+    }
+    if (this.wcols.length > 2 * 120 * 100) this.wcols.splice(0, this.wcols.length - 2 * 120 * 100);
+    const n = Math.min(this.wcols.length / 2, Math.round(seconds * 100));
+    return { sr: 48000, head: this.whead * 480, cols: new Float32Array(this.wcols.slice(this.wcols.length - n * 2)) };
+  }
+  async waveExport() { return 0; }
 }
 
 export function createSource(): Source {

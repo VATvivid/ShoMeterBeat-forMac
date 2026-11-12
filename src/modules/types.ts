@@ -23,6 +23,8 @@ export interface Module {
   settings?(): SettingItem[];
   draw(d: DrawCtx, f: Frame): void;
   resize?(w: number, h: number): void;
+  /** Called once with the tile body element (for pointer interaction / overlays). */
+  mount?(body: HTMLElement, isEditing: () => boolean): void;
 }
 
 export type ModuleFactory = () => Module;

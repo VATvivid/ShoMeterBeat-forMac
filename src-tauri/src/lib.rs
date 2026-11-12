@@ -144,6 +144,26 @@ fn rec_info(engine: State<Engine>) -> audio::recorder::RecInfo {
     engine.0.rec.lock().info.clone()
 }
 
+// ---- waveform history ----------------------------------------------------------
+
+/// Min/max envelope of the last `seconds` (see `audio/wave.rs` for the layout).
+#[tauri::command]
+fn wave_overview(engine: State<Engine>, seconds: f32) -> tauri::ipc::Response {
+    let g = engine.0.wave.lock();
+    tauri::ipc::Response::new(match g.as_ref() {
+        Some(w) => w.overview(seconds),
+        None => Vec::new(),
+    })
+}
+
+/// Exports frames [start, end) of the history to a 32-bit float WAV at `dst`.
+#[tauri::command]
+fn wave_export(engine: State<Engine>, start: f64, end: f64, dst: String) -> Result<f64, String> {
+    let g = engine.0.wave.lock();
+    let w = g.as_ref().ok_or("아직 캡처 중이 아닙니다")?;
+    w.export(start.max(0.0) as u64, end.max(0.0) as u64, std::path::Path::new(&dst)).map(|n| n as f64)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).try_init();
@@ -155,7 +175,8 @@ pub fn run() {
         .manage(Engine(shared))
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
-            rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info
+            rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
+            wave_overview, wave_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");

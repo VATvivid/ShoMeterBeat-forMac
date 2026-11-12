@@ -1,4 +1,5 @@
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { setSource } from "./engine/instance";
 import { createSource, inTauri } from "./engine/source";
 import { Grid } from "./layout/grid";
 import { MODULE_TITLES } from "./modules";
@@ -8,6 +9,7 @@ import { GRID_DIMS, layoutKindFor, resetLayout, saveLayout, saveSettings, settin
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const source = createSource();
+setSource(source);
 const grid = new Grid($("grid"));
 
 // ---- toolbar ---------------------------------------------------------------

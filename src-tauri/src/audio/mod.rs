@@ -13,6 +13,7 @@ pub mod frame;
 pub mod loudness;
 pub mod recorder;
 pub mod voice;
+pub mod wave;
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -101,6 +102,7 @@ pub struct Shared {
     pub reset_loudness: AtomicBool,
     pub rec: Mutex<RecState>,
     pub mode: Mutex<Mode>,
+    pub wave: Mutex<Option<wave::WaveHistory>>,
 }
 
 impl Shared {
@@ -113,6 +115,7 @@ impl Shared {
             reset_loudness: AtomicBool::new(false),
             rec: Mutex::new(RecState::default()),
             mode: Mutex::new(Mode::Auto),
+            wave: Mutex::new(None),
         })
     }
 
@@ -248,6 +251,7 @@ fn analysis_loop(shared: Arc<Shared>) {
             an = Some(analyzer::Analyzer::new(sr));
             lufs = Some(loudness::Loudness::new(sr));
             voice = Some(voice::VoiceAnalyzer::new(sr));
+            *shared.wave.lock() = Some(wave::WaveHistory::new(sr));
         }
         let (Some(an), Some(lufs), Some(voice)) = (an.as_mut(), lufs.as_mut(), voice.as_mut()) else { continue };
 
@@ -311,6 +315,9 @@ fn analysis_loop(shared: Arc<Shared>) {
             lufs.feed(&chunk);
             if let Some(r) = rec.as_mut() {
                 r.write(&chunk);
+            }
+            if let Some(wh) = shared.wave.lock().as_mut() {
+                wh.push(&chunk);
             }
         }
 

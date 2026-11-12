@@ -170,3 +170,9 @@ body.docked #grid { margin: 4px; }
 body.docked .tile-head { height: 18px; flex: 0 0 18px; font-size: 10px; }
 body.docked .tile-head .readout { display: none; }
 body.docked.dock-tiny .tile-head { display: none; }
+
+/* Waveform selection overlay (WAV 저장 / 취소) */
+.wave-overlay {
+  position: absolute; top: 8px; z-index: 6; display: flex; gap: 6px; padding: 4px;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}

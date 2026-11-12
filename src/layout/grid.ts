@@ -209,6 +209,7 @@ export class Grid {
 
     const t: Tile = { id, module, el, canvas, ctx: canvas.getContext("2d")!, readout, lastDraw: performance.now() };
     this.tiles.set(id, t);
+    module.mount?.(body, () => this.editing);
     this.bindDrag(t, head, "move");
     this.bindDrag(t, handle, "resize");
     this.place(t);

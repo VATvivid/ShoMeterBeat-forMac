@@ -8,6 +8,7 @@ import { StereoModule } from "./stereo";
 import { TractModule } from "./tract";
 import type { ModuleFactory } from "./types";
 import { VowelMapModule } from "./vowelmap";
+import { WaveformModule } from "./waveform";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -21,6 +22,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   tract: () => new TractModule(),
   vowelmap: () => new VowelMapModule(),
   pitch: () => new PitchModule(),
+  waveform: () => new WaveformModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -33,6 +35,7 @@ export const MODULE_TITLES: Record<string, string> = {
   tract: "Vocal Tract (발성 기관)",
   vowelmap: "Vowel Map (모음 포먼트)",
   pitch: "Pitch (노트 블록)",
+  waveform: "Waveform (파형 · 구간 저장)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */
