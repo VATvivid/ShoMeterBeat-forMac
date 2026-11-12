@@ -2,7 +2,9 @@
 //! stereo stream (for exporting a selection to WAV) plus a 100-column-per-second
 //! min/max envelope (for drawing). Positions are absolute frame counts (`head`).
 
+use super::events::{Event, FeatureExtractor, POST_MS, PRE_MS};
 use hound::{SampleFormat, WavSpec, WavWriter};
+use std::collections::VecDeque;
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::path::Path;
@@ -33,6 +35,15 @@ pub struct WaveHistory {
     cur_max: f32,
     cur_sq: f32,
     cur_n: usize,
+    // ---- onset / event extraction (Variation Map)
+    cols_total: u64,
+    flux_win: VecDeque<f32>, // last 101 flux columns for the centred mean
+    od_hist: VecDeque<f32>,  // onset function history (4 s) for the adaptive threshold
+    last_onset_col: i64,
+    pub onset_k: f32,
+    fx: FeatureExtractor,
+    events: VecDeque<Event>,
+    event_seq: u64,
 }
 
 impl WaveHistory {
@@ -57,6 +68,14 @@ impl WaveHistory {
             cur_max: 0.0,
             cur_sq: 0.0,
             cur_n: 0,
+            cols_total: 0,
+            flux_win: VecDeque::with_capacity(102),
+            od_hist: VecDeque::with_capacity(401),
+            last_onset_col: -1000,
+            onset_k: 2.5,
+            fx: FeatureExtractor::new(sr),
+            events: VecDeque::with_capacity(512),
+            event_seq: 0,
         }
     }
 
@@ -87,6 +106,7 @@ impl WaveHistory {
                 self.cols_rms.push((self.cur_sq / self.cur_n as f32).sqrt());
                 let flux = self.flux();
                 self.cols_flux.push(flux);
+                self.detect_onset(flux);
                 if self.cols_min.len() > self.cols_cap {
                     let drop = self.cols_min.len() - self.cols_cap;
                     self.cols_min.drain(..drop);
@@ -97,6 +117,72 @@ impl WaveHistory {
                 self.cur_n = 0;
             }
         }
+    }
+
+    /// Centred-mean onset function with a 0.5 s delay; an onset at column `o` is
+    /// confirmed once column `o + 51` exists, so the clip (−20 … +320 ms) is already in
+    /// the ring. Adaptive threshold: mean + onset_k·std over the last 4 s.
+    fn detect_onset(&mut self, flux: f32) {
+        self.cols_total += 1;
+        self.flux_win.push_back(flux);
+        if self.flux_win.len() > 101 {
+            self.flux_win.pop_front();
+        }
+        if self.flux_win.len() < 101 {
+            return;
+        }
+        let mean = self.flux_win.iter().sum::<f32>() / 101.0;
+        let od = (self.flux_win[50] - mean).max(0.0); // column cols_total-1-50
+        self.od_hist.push_back(od);
+        if self.od_hist.len() > 400 {
+            self.od_hist.pop_front();
+        }
+        let n = self.od_hist.len();
+        if n < 60 {
+            return;
+        }
+        // candidate = previous od (column cols_total-1-51): local max above threshold
+        let (c0, c1, c2) = (self.od_hist[n - 3], self.od_hist[n - 2], self.od_hist[n - 1]);
+        let m = self.od_hist.iter().sum::<f32>() / n as f32;
+        let sd = (self.od_hist.iter().map(|v| (v - m) * (v - m)).sum::<f32>() / n as f32).sqrt().max(1e-6);
+        let thr = m + self.onset_k * sd;
+        let col = self.cols_total as i64 - 1 - 51;
+        if c1 >= thr && c1 > c0 && c1 >= c2 && col - self.last_onset_col >= 10 {
+            self.last_onset_col = col;
+            self.extract_event(col as u64, c1);
+        }
+    }
+
+    fn extract_event(&mut self, col: u64, _strength: f32) {
+        let onset_frame = col * self.col_frames as u64;
+        let pre = (PRE_MS / 1000.0 * self.sr as f32) as u64;
+        let post = (POST_MS / 1000.0 * self.sr as f32) as u64;
+        let start = onset_frame.saturating_sub(pre);
+        let end = (onset_frame + post).min(self.head);
+        if end <= start || start + (self.cap_frames as u64) < self.head {
+            return;
+        }
+        let mono: Vec<f32> = (start..end)
+            .map(|p| {
+                let idx = (p as usize % self.cap_frames) * 2;
+                0.5 * (self.ring[idx] + self.ring[idx + 1])
+            })
+            .collect();
+        let features = self.fx.features(&mono);
+        let peak_db = features[56];
+        if peak_db < -60.0 {
+            return;
+        }
+        self.event_seq += 1;
+        self.events.push_back(Event { seq: self.event_seq, t: onset_frame as f64 / self.sr as f64, peak_db, features });
+        if self.events.len() > 500 {
+            self.events.pop_front();
+        }
+    }
+
+    /// Events with seq > `after` (oldest first).
+    pub fn events_since(&self, after: u64) -> Vec<Event> {
+        self.events.iter().filter(|e| e.seq > after).cloned().collect()
     }
 
     /// Spectral flux of the newest FLUX_N mono samples vs the previous column: sum of

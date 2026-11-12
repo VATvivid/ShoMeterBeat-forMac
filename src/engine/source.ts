@@ -37,7 +37,12 @@ export interface Source {
   analyzeFile(path: string, priorBpm?: number): Promise<FileAnalysis>;
   writeText(path: string, text: string): Promise<void>;
   readText(path: string): Promise<string>;
+  /** Sound events (onset clips → feature vectors) with seq > after. */
+  eventsSince(after: number): Promise<SoundEvent[]>;
+  setOnsetK(k: number): Promise<void>;
 }
+
+export interface SoundEvent { seq: number; t: number; peak_db: number; features: number[] }
 
 export interface LoadedAudio { sr: number; channels: number; frames: number; samples: Float32Array /* interleaved */ }
 export interface FileAnalysis {
@@ -87,6 +92,8 @@ class TauriSource implements Source {
   analyzeFile(path: string, priorBpm?: number) { return invoke<FileAnalysis>("analyze_file", { path, priorBpm }); }
   writeText(path: string, text: string) { return invoke<void>("write_text", { path, text }); }
   readText(path: string) { return invoke<string>("read_text", { path }); }
+  eventsSince(after: number) { return invoke<SoundEvent[]>("events_since", { after }); }
+  setOnsetK(k: number) { return invoke<void>("set_onset_k", { k }); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -216,6 +223,27 @@ class MockSource implements Source {
   }
   async writeText() {}
   async readText() { return "{}"; }
+  private evSeq = 0;
+  private evLast = 0;
+  async setOnsetK() {}
+  async eventsSince(after: number): Promise<SoundEvent[]> {
+    // Three "sample pools" fired on beats; every so often the same sample repeats exactly.
+    const now = this.t;
+    const out: SoundEvent[] = [];
+    while (this.evLast + 0.5 <= now) {
+      this.evLast += 0.5;
+      const pool = Math.floor(this.evLast / 0.5) % 7 < 4 ? 0 : Math.floor(this.evLast / 0.5) % 7 < 6 ? 1 : 2;
+      const base = [[-30, 9.5, 1.2, 10, 60], [-26, 11.5, 1.6, 4, 25], [-34, 8.0, 2.0, 25, 120]][pool];
+      const repeat = Math.floor(this.evLast / 0.5) % 11 === 0;
+      const j = (k: number) => (repeat ? 0 : (Math.random() - 0.5) * k);
+      const f = new Array(58).fill(0).map((_, i) => i < 24 ? base[0] - i * 0.8 + pool * 3 * Math.sin(i / 3) + j(3) : i < 48 ? j(2) : 0);
+      f[48] = base[1] + j(0.4); f[49] = base[2] + j(0.3); f[50] = base[1] + 1 + j(0.4); f[51] = 0.2 + j(0.1);
+      f[52] = base[3] + j(3); f[53] = base[4] + j(10); f[54] = base[4] * 2 + j(20); f[55] = 12 + j(2); f[56] = -8 + j(2); f[57] = 2 + pool + j(0.5);
+      this.evSeq++;
+      out.push({ seq: this.evSeq, t: this.evLast, peak_db: f[56], features: f });
+    }
+    return out.filter((e) => e.seq > after);
+  }
   async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9 }; }
 }
 

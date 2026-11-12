@@ -12,6 +12,7 @@ pub mod capture;
 pub mod frame;
 pub mod loudness;
 pub mod decode;
+pub mod events;
 pub mod recorder;
 pub mod tempo;
 pub mod voice;

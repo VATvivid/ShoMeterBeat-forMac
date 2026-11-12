@@ -231,6 +231,20 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
     })
 }
 
+// ---- sound events (Variation Map) ------------------------------------------------
+
+#[tauri::command]
+fn events_since(engine: State<Engine>, after: f64) -> Vec<audio::events::Event> {
+    engine.0.wave.lock().as_ref().map(|w| w.events_since(after.max(0.0) as u64)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_onset_k(engine: State<Engine>, k: f32) {
+    if let Some(w) = engine.0.wave.lock().as_mut() {
+        w.onset_k = k.clamp(1.0, 8.0);
+    }
+}
+
 // ---- text files (preset export / import) ----------------------------------------
 
 #[tauri::command]
@@ -275,7 +289,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
-            wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text
+            wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
+            events_since, set_onset_k
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");
