@@ -14,13 +14,13 @@ fn frame(engine: State<Engine>) -> tauri::ipc::Response {
 }
 
 #[tauri::command]
-fn list_devices() -> Vec<String> {
+fn list_devices() -> Vec<audio::capture::DeviceEntry> {
     audio::capture::list_devices()
 }
 
 #[tauri::command]
-fn set_device(engine: State<Engine>, name: Option<String>) {
-    engine.0.send(Ctl::SetDevice(name.filter(|n| !n.is_empty())));
+fn set_device(engine: State<Engine>, name: Option<String>, kind: Option<audio::capture::Kind>) {
+    engine.0.send(Ctl::SetDevice(name.filter(|n| !n.is_empty()), kind.unwrap_or_default()));
 }
 
 #[tauri::command]

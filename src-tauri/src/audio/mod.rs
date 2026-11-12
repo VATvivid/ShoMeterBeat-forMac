@@ -48,6 +48,7 @@ impl Ring {
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Status {
     pub device: String,
+    pub kind: capture::Kind,
     pub sample_rate: u32,
     pub channels: u16,
     pub running: bool,
@@ -55,7 +56,7 @@ pub struct Status {
 }
 
 pub enum Ctl {
-    SetDevice(Option<String>),
+    SetDevice(Option<String>, capture::Kind),
     Stop,
 }
 
@@ -115,13 +116,15 @@ pub fn start(shared: Arc<Shared>) {
             .spawn(move || {
                 let mut current: Option<capture::Capture> = None;
                 let mut wanted: Option<String> = None;
+                let mut wanted_kind = capture::Kind::Output;
                 let mut retry_at = Instant::now();
                 loop {
                     if current.is_none() && Instant::now() >= retry_at {
-                        match capture::start(wanted.as_deref(), shared.clone()) {
+                        match capture::start(wanted.as_deref(), wanted_kind, shared.clone()) {
                             Ok(c) => {
                                 *shared.status.lock() = Status {
                                     device: c.name.clone(),
+                                    kind: c.kind,
                                     sample_rate: c.sample_rate,
                                     channels: c.channels,
                                     running: true,
@@ -140,8 +143,9 @@ pub fn start(shared: Arc<Shared>) {
                         }
                     }
                     match rx.recv_timeout(Duration::from_millis(250)) {
-                        Ok(Ctl::SetDevice(name)) => {
+                        Ok(Ctl::SetDevice(name, kind)) => {
                             wanted = name;
+                            wanted_kind = kind;
                             current = None; // drops the stream
                             retry_at = Instant::now();
                         }

@@ -111,27 +111,47 @@ document.addEventListener("keydown", (e) => {
 
 // ---- device select ---------------------------------------------------------
 const deviceSel = $<HTMLSelectElement>("device-select");
+// Option value = "<kind>|<name>"; "output|" means the default output device.
+const devKey = (kind: string, name: string) => `${kind}|${name}`;
 async function populateDevices() {
-  const names = await source.listDevices();
+  const devs = await source.listDevices();
   deviceSel.innerHTML = "";
+  const outs = devs.filter((d) => d.kind === "output"), ins = devs.filter((d) => d.kind === "input");
+  const gOut = document.createElement("optgroup");
+  gOut.label = "출력 장치 (루프백 — 이 장치로 나가는 모든 소리)";
   const def = document.createElement("option");
-  def.value = "";
-  def.textContent = names.length ? `기본 출력: ${names[0]}` : "출력 장치 없음";
-  deviceSel.appendChild(def);
-  for (const n of names.slice(1)) {
+  def.value = devKey("output", "");
+  def.textContent = outs.length ? `기본 출력: ${outs[0].name}` : "출력 장치 없음";
+  gOut.appendChild(def);
+  for (const d of outs.filter((d) => !d.default)) {
     const o = document.createElement("option");
-    o.value = n; o.textContent = n;
-    deviceSel.appendChild(o);
+    o.value = devKey("output", d.name); o.textContent = d.name;
+    gOut.appendChild(o);
   }
-  if (settings.device && names.includes(settings.device)) {
-    deviceSel.value = settings.device;
-    await source.setDevice(settings.device);
+  deviceSel.appendChild(gOut);
+  if (ins.length) {
+    const gIn = document.createElement("optgroup");
+    gIn.label = "입력 장치 (인터페이스 루프백 · 가상 케이블 — ASIO 앱 모니터링)";
+    for (const d of ins) {
+      const o = document.createElement("option");
+      o.value = devKey("input", d.name); o.textContent = (d.default ? "기본 입력: " : "") + d.name;
+      gIn.appendChild(o);
+    }
+    deviceSel.appendChild(gIn);
+  }
+  const wanted = devKey(settings.deviceKind, settings.device ?? "");
+  const exists = [...deviceSel.options].some((o) => o.value === wanted);
+  if (exists && wanted !== devKey("output", "")) {
+    deviceSel.value = wanted;
+    await source.setDevice(settings.device, settings.deviceKind);
   }
 }
 deviceSel.addEventListener("change", async () => {
-  settings.device = deviceSel.value || null;
+  const [kind, ...rest] = deviceSel.value.split("|");
+  settings.deviceKind = kind === "input" ? "input" : "output";
+  settings.device = rest.join("|") || null;
   saveSettings();
-  await source.setDevice(settings.device);
+  await source.setDevice(settings.device, settings.deviceKind);
 });
 populateDevices().catch((e) => console.error(e));
 
@@ -142,7 +162,7 @@ let stateHoldUntil = 0; // keep "저장됨: …" visible for a while
 async function pollStatus() {
   try {
     const s = await source.status();
-    stDevice.textContent = `장치 ${s.device || "—"}`;
+    stDevice.textContent = `${s.kind === "input" ? "입력" : "루프백"} ${s.device || "—"}`;
     stRate.textContent = s.sample_rate ? `${s.sample_rate} Hz · ${s.channels}ch` : "— Hz";
     if (stState.textContent?.startsWith("저장됨") && performance.now() < stateHoldUntil) return;
     if (stState.textContent?.startsWith("저장됨")) stateHoldUntil = 0;

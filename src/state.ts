@@ -10,7 +10,9 @@ export const MIN_W = 4;
 export const MIN_H = 3;
 
 export interface Settings {
+  /** null = default output device (loopback). */
   device: string | null;
+  deviceKind: "output" | "input";
   loudnessTarget: number;
   levelMode: LevelMode;
 }
@@ -42,7 +44,7 @@ function load<T>(key: string, fallback: T): T {
   }
 }
 
-export const settings: Settings = load(SETTINGS_KEY, { device: null, loudnessTarget: -14, levelMode: "peak" });
+export const settings: Settings = load(SETTINGS_KEY, { device: null, deviceKind: "output", loudnessTarget: -14, levelMode: "peak" });
 export const layout: Layout = load(LAYOUT_KEY, defaultLayout());
 
 export function saveSettings() {
