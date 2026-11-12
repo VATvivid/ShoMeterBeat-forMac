@@ -21,7 +21,10 @@ src-tauri/plugins/              bundle_plugin.py가 만든 .clap / .vst3 (git �
                                 소스 모드(audio/mod.rs Mode): Auto=루프백+플러그인 합산(기본) / Output / Input / Plugin
 src/engine/source.ts            Tauri면 invoke('frame'), 아니면 합성 신호(브라우저 개발용)
 src/modules/*.ts                모듈 1개 = 클래스 1개(draw(ctx, frame)), index.ts에 등록
-src/modules/vowels.ts           모음 기준 포먼트(Peterson & Barney 1952 남성 평균)와 거리·혀 위치 변환
+src/modules/vowels.ts           모음 기준 포먼트(Peterson & Barney 1952, 남/여/아동)와 거리, 추가 모음(chimera 표)
+src/modules/vowelTargets.ts     모음별 조음 값 표(chimera-vocal-synth MIT 데이터, THIRD_PARTY_NOTICES.md) — 생성 파일, 손으로 고치지 않음
+src/modules/articulation.ts     F1/F2 → 조음 값(가까운 모음 4개 역거리 보간), REST 자세
+src/modules/tract.ts            측면도 그리기(체 좌표 cm, 원점 성문): 턱 회전·혀·입술·후두·잔상·열색·캘리퍼·호흡
 src/layout/grid.ts              24×16 그리드 타일, 편집 모드 드래그/리사이즈, localStorage 저장
 src/state.ts                    설정·레이아웃 저장, 기본 배치(DESIGN.md §5)
 ```

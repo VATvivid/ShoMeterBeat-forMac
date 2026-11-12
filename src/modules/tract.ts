@@ -1,37 +1,51 @@
 import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
-import { Median, nearestVowel, setVoiceType, tongueFromFormants, VOICE_LABELS, voiceType, type VoiceType } from "./vowels";
+import { Median, setVoiceType, VOICE_LABELS, voiceType, type VoiceType } from "./vowels";
+import { articForFormants, lerpArtic, REST } from "./articulation";
+import type { Artic } from "./vowelTargets";
 
-// Midsagittal vocal-tract profile (face looks left) driven by the live formant
-// estimate: F1 → jaw/tongue height, F2 → tongue frontness, back vowels → lip
-// rounding, f0 → glottal pulse, level → airflow particles. Pure parametric
-// curves in a unit box; nothing anatomical is measured.
+// Midsagittal vocal tract (face looks right) in body centimetres: origin at the
+// glottis, x forward, y up. The articulation (tongue body/tip, jaw, lips, larynx) is
+// blended from calibrated vowel targets nearest to the measured F1/F2; everything
+// else (skull, spine, trachea, nasal cavity, eye) is a fixed stylised template.
+// Dynamic details: jaw rotates about the condyle, afterimages of tongue/jaw/lips,
+// pressure heat along the airway, minimum-constriction caliper, glottal pulse at f0,
+// larynx rising with pitch, airflow particles, breath turbulence, lung gauge, gaze.
 
 interface P { x: number; y: number }
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const CONDYLE: P = { x: -2.5, y: 10.5 };
+const INCISOR_LOWER: P = { x: 6.9, y: 6.3 };
+const TONGUE_R = 2.3;
+const ECHO_EVERY = 0.028, ECHO_KEEP = 0.12;
+
+interface Echo { t: number; tongue: P[]; mandible: P[]; lips: P[][] }
 
 export class TractModule implements Module {
   readonly id = "tract";
   readonly title = "Vocal Tract";
-  private height = 0.5;   // 0 open … 1 close
-  private front = 0.5;    // 0 back … 1 front
-  private round = 0;      // lip rounding 0..1
-  private open = 0;       // jaw opening 0..1 (voiced + low vowel)
-  private voice = 0;      // smoothed voicing
-  private level = 0;      // 0..1 from momentary loudness
-  private phase = 0;      // glottal cycle
-  private particles: { t: number; off: number; speed: number }[] = [];
+  private artic: Artic = { ...REST };
+  private voice = 0;
+  private level = 0;
+  private phase = 0;
+  private larynxRise = 0;
+  private velum = 1;             // 1 raised (nasal port shut) … 0 lowered
+  private particles: { t: number; off: number; speed: number; life: number }[] = [];
   private turb: { t: number; off: number; speed: number; life: number }[] = [];
-  private breath = 0;          // smoothed breath intensity 0..1
-  private breathPeak = 0;      // for onset detection
+  private breath = 0;
+  private breathPeak = 0;
   private breathOnsets: number[] = [];
-  private breathRate = 0;      // per minute, 0 = unknown
-  private lung = 0.5;          // 0 empty … 1 full (inferred)
+  private breathRate = 0;
+  private lung = 0.5;
   private clock = 0;
+  private echoes: Echo[] = [];
+  private lastEcho = 0;
+  private gaze = { x: 0, y: 0, tx: 0, ty: 0, next: 2, lid: 0, blinkAt: 4 };
   private m1 = new Median(5);
   private m2 = new Median(5);
   private f1 = 0; private f2 = 0;
+  private ipa = "";
 
   settings(): SettingItem[] {
     return [
@@ -40,28 +54,44 @@ export class TractModule implements Module {
   }
 
   headReadout(f: Frame) {
-    const n = f.voiced > 0.4 ? nearestVowel(this.f1, this.f2) : null;
+    const live = f.voiced > 0.4 && this.f1 > 0;
     const br = this.breath > 0.2 ? `  숨 ${Math.round(this.breath * 100)}%` : "";
     const rate = this.breathRate > 0 ? `  ${this.breathRate.toFixed(0)}/min` : "";
-    return `${n ? "[" + n.v.ipa + "] " : ""}f0 ${f.f0 > 0 && f.voiced > 0.4 ? f.f0.toFixed(0) : "—"} Hz${br}${rate}`;
+    return `${live && this.ipa ? "[" + this.ipa + "] " : ""}f0 ${f.f0 > 0 && f.voiced > 0.4 ? f.f0.toFixed(0) : "—"} Hz${br}${rate}`;
   }
 
-  /** Breath intensity from the frame: loud-ish, noise-like, unvoiced. */
   private breathTarget(f: Frame): number {
-    const level = Math.min(1, Math.max(0, (f.rms[0] + 58) / 34));          // −58 dB … −24 dB
-    const noisy = Math.min(1, Math.max(0, (f.flatness - 0.15) / 0.3));      // flatness 0.15 … 0.45
-    const unvoiced = 1 - Math.min(1, Math.max(0, (f.voiced - 0.2) / 0.3));  // voiced ≤ 0.2 … 0.5
+    const level = Math.min(1, Math.max(0, (f.rms[0] + 58) / 34));
+    const noisy = Math.min(1, Math.max(0, (f.flatness - 0.15) / 0.3));
+    const unvoiced = 1 - Math.min(1, Math.max(0, (f.voiced - 0.2) / 0.3));
     return level * noisy * unvoiced;
   }
 
   draw(d: DrawCtx, f: Frame) {
     const { ctx, w, h, dt } = d;
-    // ---- state update
+    this.clock += dt;
+    const body = voiceType();
     const live = f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0;
     if (live) { this.f1 = this.m1.push(f.f1); this.f2 = this.m2.push(f.f2); }
     const k = Math.min(1, dt * 10);
-    // ---- breath envelope (fast attack, ~300 ms release) + onset-based rate
-    this.clock += dt;
+    const lvl = Math.min(1, Math.max(0, (f.lufsM + 50) / 40));
+    this.level += (lvl - this.level) * k;
+    this.voice += ((live ? f.voiced : 0) - this.voice) * k;
+
+    // ---- articulation target: calibrated vowel blend, or rest when silent
+    if (live) {
+      const a = articForFormants(this.f1, this.f2, body);
+      this.ipa = a.ipa;
+      this.artic = lerpArtic(this.artic, a.artic, k);
+      this.larynxRise += (Math.max(-0.5, Math.min(1, Math.log2(Math.max(50, f.f0) / 150))) * 0.45 - this.larynxRise) * k;
+    } else {
+      const r = Math.min(1, dt * 3);
+      this.artic = lerpArtic(this.artic, REST, r);
+      this.larynxRise += (0 - this.larynxRise) * r;
+    }
+    if (this.voice > 0.2 && f.f0 > 0) this.phase = (this.phase + f.f0 * dt) % 1;
+
+    // ---- breath envelope, rate, lungs
     const bt = this.breathTarget(f);
     this.breath = bt > this.breath ? bt : Math.max(bt, this.breath - dt * 3.3);
     if (this.breath > 0.25 && this.breathPeak <= 0.25) {
@@ -75,166 +105,253 @@ export class TractModule implements Module {
       if (on.length >= 3) {
         const iv = on.slice(1).map((t, i) => t - on[i]);
         const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
-        const ok = iv.every((v) => v > 0.3 && v < 3 && Math.abs(v - mean) < mean * 0.5);
-        this.breathRate = ok ? 60 / mean : 0;
+        this.breathRate = iv.every((v) => v > 0.3 && v < 3 && Math.abs(v - mean) < mean * 0.5) ? 60 / mean : 0;
       } else this.breathRate = 0;
     }
-    // Inferred lung volume: breaths (short, bright bursts) fill, voicing empties.
     const inhale = this.breath > 0.3 && f.centroid > 1800;
     this.lung += ((inhale ? 1 : live ? 0.15 : this.lung) - this.lung) * Math.min(1, dt * (inhale ? 2.5 : 0.35));
-    const lvl = Math.min(1, Math.max(0, (f.lufsM + 50) / 40));
-    this.level += (lvl - this.level) * k;
-    this.voice += ((live ? f.voiced : 0) - this.voice) * k;
-    if (live) {
-      const t = tongueFromFormants(this.f1, this.f2);
-      this.height += (t.height - this.height) * k;
-      this.front += (t.front - this.front) * k;
-      this.round += ((1 - t.front) * 0.8 * (t.height > 0.4 ? 1 : 0.5) - this.round) * k;
-      this.open += ((1 - t.height) * 0.9 + 0.1 - this.open) * k;
-    } else {
-      // relax to rest
-      const r = Math.min(1, dt * 3);
-      this.height += (0.5 - this.height) * r;
-      this.front += (0.5 - this.front) * r;
-      this.round += (0 - this.round) * r;
-      this.open += (0 - this.open) * r;
-    }
-    if (this.voice > 0.2 && f.f0 > 0) this.phase = (this.phase + f.f0 * dt) % 1;
+    // Velum: shut while phonating; drops a little during quiet breathing (nose breathing assumed).
+    this.velum += ((this.voice > 0.2 ? 1 : this.breath > 0.2 && f.centroid < 1800 ? 0.35 : 0.8) - this.velum) * Math.min(1, dt * 4);
 
-    // ---- geometry (unit box → px)
-    const s = Math.min(w, h * 0.95);
-    const ox = (w - s) / 2, oy = (h - s) / 2;
-    const P = (x: number, y: number): P => ({ x: ox + x * s, y: oy + y * s });
-    const jaw = this.open * 0.09;
-    const prot = this.round * 0.035;
-    const lipGap = 0.012 + this.open * 0.05 * (1 - this.round * 0.5);
+    // ---- gaze: idle saccades, eyes roll up on high notes, blinks
+    const g = this.gaze;
+    g.next -= dt;
+    if (g.next <= 0) { g.next = 2 + Math.random() * 3; if (Math.random() < 0.35) { g.tx = 0; g.ty = 0; } else { g.tx = (Math.random() - 0.5) * 1.2; g.ty = (Math.random() - 0.5) * 0.8; } }
+    const up = live ? Math.max(0, Math.log2(Math.max(50, f.f0) / 220)) * 0.6 : 0;
+    g.x += (g.tx - g.x) * Math.min(1, dt * 6); g.y += (g.ty - up - g.y) * Math.min(1, dt * 6);
+    g.blinkAt -= dt; if (g.blinkAt <= 0) { g.blinkAt = 3 + Math.random() * 4; g.lid = 1; }
+    g.lid = Math.max(0, g.lid - dt * 8);
 
-    const line = (pts: P[], color: string, width = 1.5, close = false) => {
-      ctx.beginPath();
-      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-      if (close) ctx.closePath();
-      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.lineCap = "round";
-      ctx.stroke();
+    // ---- geometry mapping (body cm → px)
+    const X0 = -5.6, X1 = 10.8, Y0 = -5.2, Y1 = 17.0;
+    const s = Math.min(w / (X1 - X0), h / (Y1 - Y0));
+    const ox = (w - (X1 - X0) * s) / 2, oy = (h - (Y1 - Y0) * s) / 2;
+    const P = (x: number, y: number): P => ({ x: ox + (x - X0) * s, y: oy + (Y1 - y) * s });
+    const A = this.artic;
+    const theta = Math.max(-0.2, Math.min(3, A.jaw)) / 9.8;           // rad; the incisors drop ≈ jaw cm
+    const rot = (p: P): P => {                                          // rotate about the condyle (jaw down)
+      const dx = p.x - CONDYLE.x, dy = p.y - CONDYLE.y, c = Math.cos(-theta), sn = Math.sin(-theta);
+      return { x: CONDYLE.x + dx * c - dy * sn, y: CONDYLE.y + dx * sn + dy * c };
     };
-    const curve = (pts: P[], color: string, width = 1.5) => {
-      // Catmull-Rom → bezier for a smooth stroke.
-      ctx.beginPath();
+    const lar = 0.6 * A.larynx + this.larynxRise;                      // larynx height offset (cm)
+    const prot = A.lipProt;
+    const lowerIncisor = rot(INCISOR_LOWER);
+    const jawDrop = INCISOR_LOWER.y - lowerIncisor.y;
+
+    // ---- colours
+    const outline = theme("fg-2"), bone = withAlpha(theme("fg-1"), 0.55), palateC = theme("fg-1");
+    const tongueC = theme("sig"), jawC = theme("peak"), lipC = theme("sig-2"), velumC = theme("fg-0");
+
+    const curveTo = (pts: P[], close: boolean) => {
+      const n = pts.length;
       ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+      for (let i = 0; i < (close ? n : n - 1); i++) {
+        const p0 = close ? pts[(i - 1 + n) % n] : pts[Math.max(0, i - 1)];
+        const p1 = pts[i], p2 = pts[(i + 1) % n];
+        const p3 = close ? pts[(i + 2) % n] : pts[Math.min(n - 1, i + 2)];
         ctx.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6, p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6, p2.x, p2.y);
       }
+      if (close) ctx.closePath();
+    };
+    const stroke = (pts: P[], color: string, width = 1.5, close = false, smooth = true) => {
+      if (pts.length < 2) return;
+      ctx.beginPath();
+      if (smooth) curveTo(pts, close);
+      else { pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); if (close) ctx.closePath(); }
       ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.lineCap = "round";
       ctx.stroke();
     };
+    const fillPath = (pts: P[], color: string) => { ctx.beginPath(); curveTo(pts, true); ctx.fillStyle = color; ctx.fill(); };
+    const Ps = (pts: [number, number][]) => pts.map(([x, y]) => P(x, y));
 
-    const outline = theme("fg-2");
-    const palateC = theme("fg-1");
-    const tongueC = theme("sig");
-    const jawC = theme("peak");
-    const lipC = theme("sig-2");
-
-    // Head / skull outline (static)
-    curve([P(0.62, 0.04), P(0.40, 0.08), P(0.26, 0.20), P(0.20, 0.36), P(0.15, 0.44), P(0.22, 0.49), P(0.19, 0.54)], outline);
-    curve([P(0.62, 0.04), P(0.80, 0.10), P(0.88, 0.30), P(0.86, 0.55), P(0.84, 0.80), P(0.86, 1.0)], outline);
-    // Nasal cavity + hard/soft palate (velum lowers slightly with back vowels — nasal hint off)
-    curve([P(0.24, 0.50), P(0.34, 0.47), P(0.46, 0.45), P(0.56, 0.45), P(0.64, 0.48)], palateC, 2);
-    curve([P(0.30, 0.36), P(0.44, 0.33), P(0.58, 0.35), P(0.66, 0.42)], withAlpha(palateC, 0.5), 1);
-    // Upper teeth
-    line([P(0.235, 0.50), P(0.245, 0.545), P(0.265, 0.505)], outline, 1);
-    // Pharynx back wall down to the larynx
-    curve([P(0.66, 0.44), P(0.70, 0.56), P(0.72, 0.70), P(0.72, 0.86), P(0.74, 1.0)], outline);
-
-    // Jaw (rotates down with opening): chin + jaw line + lower teeth + lower lip
-    const chin = P(0.30, 0.76 + jaw);
-    curve([P(0.20, 0.60 + jaw * 0.6), P(0.22, 0.70 + jaw), chin, P(0.42, 0.80 + jaw), P(0.58, 0.82 + jaw * 0.6), P(0.66, 0.84)], jawC, 1.5);
-    line([P(0.25, 0.60 + jaw * 0.9), P(0.26, 0.57 + jaw * 0.9), P(0.28, 0.60 + jaw * 0.9)], outline, 1);
-
-    // Lips
-    const lipX = 0.19 - prot;
-    curve([P(0.26, 0.515), P(lipX, 0.53), P(lipX - 0.01, 0.55 - lipGap / 2), P(0.22, 0.555 - lipGap / 2)], lipC, 2);
-    curve([P(0.26, 0.60 + jaw * 0.9), P(lipX, 0.58 + jaw * 0.9), P(lipX - 0.01, 0.555 + lipGap / 2 + jaw * 0.9), P(0.22, 0.555 + lipGap / 2 + jaw * 0.9)], lipC, 2);
-
-    // Tongue: root fixed near the pharynx, apex moves with height/frontness, tip near lower teeth
-    const apex = P(lerp(0.60, 0.36, this.front), lerp(0.66, 0.475, this.height) + jaw * 0.5);
-    const tip = P(lerp(0.40, 0.30, this.front), 0.60 + jaw * 0.9 - this.height * 0.04);
-    const root = P(0.68, 0.72 + jaw * 0.3);
-    const tongue = [P(0.30, 0.64 + jaw * 0.9), tip, apex, P(lerp(0.70, 0.56, this.front * 0.5), lerp(0.70, 0.58, this.height) + jaw * 0.4), root];
-    ctx.beginPath();
-    ctx.moveTo(tongue[0].x, tongue[0].y);
-    for (let i = 0; i < tongue.length - 1; i++) {
-      const p0 = tongue[Math.max(0, i - 1)], p1 = tongue[i], p2 = tongue[i + 1], p3 = tongue[Math.min(tongue.length - 1, i + 2)];
-      ctx.bezierCurveTo(p1.x + (p2.x - p0.x) / 6, p1.y + (p2.y - p0.y) / 6, p2.x - (p3.x - p1.x) / 6, p2.y - (p3.y - p1.y) / 6, p2.x, p2.y);
+    // ---- static anatomy: spine, skull, brain, nose, eye, nasal cavity, pharynx, trachea
+    ctx.fillStyle = withAlpha(theme("fg-2"), 0.35);
+    for (let y = -4.4; y < 10.5; y += 1.75) { const a = P(-4.7, y + 1.3), b = P(-3.5, y); ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); }
+    stroke(Ps([[-3.0, -5.2], [-4.4, 1.5], [-5.1, 7.5], [-4.6, 12.8], [-2.6, 16.0], [1.6, 16.7], [5.0, 15.7], [6.9, 13.6], [7.5, 11.6], [8.5, 10.1], [9.7, 9.3], [8.7, 8.6], [8.3, 8.05]]), outline, 1.5);
+    stroke(Ps([[-3.8, 9.5], [-3.2, 13.6], [0.5, 15.4], [4.2, 14.4], [5.8, 12.2]]), withAlpha(theme("fg-2"), 0.4), 1);
+    {
+      const e = P(5.0, 12.4), r = 0.62 * s;
+      ctx.strokeStyle = outline; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(e.x, e.y, r, r * 0.55, 0, 0, Math.PI * 2); ctx.stroke();
+      const open = 1 - g.lid;
+      if (open > 0.15) {
+        ctx.fillStyle = theme("fg-0");
+        ctx.beginPath(); ctx.ellipse(e.x + g.x * r * 0.45, e.y - g.y * r * 0.3, r * 0.28, r * 0.28 * open, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.moveTo(e.x - r, e.y); ctx.lineTo(e.x + r, e.y); ctx.stroke();
+      }
     }
-    ctx.lineTo(P(0.62, 0.84).x, P(0.62, 0.84).y);
-    ctx.lineTo(P(0.34, 0.80 + jaw * 0.9).x, P(0.34, 0.80 + jaw * 0.9).y);
-    ctx.closePath();
-    ctx.fillStyle = withAlpha(tongueC, 0.12 + this.voice * 0.1);
-    ctx.fill();
-    curve(tongue, tongueC, 2);
+    stroke(Ps([[0.9, 9.6], [1.4, 11.9], [3.6, 12.9], [6.6, 12.0], [8.2, 10.1], [7.9, 9.25], [5.0, 9.5], [2.3, 9.5]]), withAlpha(outline, 0.8), 1, true);
+    for (const [x, y, rx, ry] of [[3.0, 10.4, 0.9, 0.35], [4.4, 11.1, 1.0, 0.4], [5.9, 10.5, 0.8, 0.3]]) {
+      const c = P(x, y); ctx.strokeStyle = withAlpha(outline, 0.7); ctx.beginPath(); ctx.ellipse(c.x, c.y, rx * s, ry * s, -0.2, 0, Math.PI * 2); ctx.stroke();
+    }
+    stroke(Ps([[-1.25, -0.5], [-1.3, 3.0], [-1.4, 6.0], [-1.45, 9.0], [-1.1, 11.0], [0.2, 11.9]]), outline, 1.5);
+    stroke(Ps([[-0.9, -0.6], [-0.95, -5.2]]), outline, 1.2, false, false);
+    stroke(Ps([[0.9, -0.6], [0.95, -5.2]]), outline, 1.2, false, false);
+    for (let y = -1.3; y > -5; y -= 1.0) stroke(Ps([[-0.85, y], [0.85, y]]), withAlpha(outline, 0.6), 1, false, false);
+    const palate: P[] = Ps([[7.3, 7.9], [6.7, 8.65], [5.6, 9.15], [4.3, 9.35], [2.9, 9.3], [1.7, 9.05]]);
+    stroke(palate, palateC, 2);
+    stroke(Ps([[7.25, 7.95], [7.45, 7.05], [7.65, 7.95]]), bone, 1, false, false);
+    const uvula: P = P(lerp(0.55, -0.6, this.velum), lerp(7.2, 8.4, this.velum));
+    stroke([P(1.7, 9.05), P(lerp(1.0, 0.4, this.velum), lerp(8.4, 8.9, this.velum)), uvula], velumC, 2);
+    stroke(Ps([[0.2, 2.2 + lar], [0.9, 3.6 + lar], [1.4, 4.9 + lar]]), withAlpha(outline, 0.9), 1.2);
+    { const hy = P(1.6, 3.0 + lar); ctx.strokeStyle = bone; ctx.beginPath(); ctx.ellipse(hy.x, hy.y, 0.45 * s, 0.18 * s, 0, 0, Math.PI * 2); ctx.stroke(); }
+    stroke(Ps([[0.15, 1.9 + lar], [1.35, 2.3 + lar], [1.35, 0.1 + lar], [0.15, -0.5 + lar]]), bone, 1.2, true, false);
 
-    // Larynx + vocal folds (pulse when voiced, held open while breathing)
-    const gap = 0.004 + (this.voice > 0.2 ? 0.012 * Math.abs(Math.sin(this.phase * Math.PI)) : 0.0) + 0.02 * this.breath * (1 - this.voice);
-    line([P(0.70, 0.86), P(0.70, 0.95)], outline, 1);
-    const foldC = this.voice > 0.2 ? theme("clip") : outline;
-    line([P(0.72 - gap, 0.87), P(0.72 - gap * 2, 0.90), P(0.72 - gap, 0.93)], foldC, 1.5);
-    line([P(0.72 + gap, 0.87), P(0.72 + gap * 2, 0.90), P(0.72 + gap, 0.93)], foldC, 1.5);
+    // ---- mandible (rotates about the condyle), lower incisor, chin skin
+    const mandible = [{ x: 6.9, y: 6.3 }, { x: 8.1, y: 4.4 }, { x: 7.8, y: 2.6 }, { x: 6.4, y: 1.5 }, { x: 3.8, y: 1.2 }, { x: 1.2, y: 1.8 }, { x: -0.6, y: 3.2 }, { x: -1.6, y: 6.5 }, { x: -2.3, y: 9.6 }].map(rot);
+    const mandiblePx = mandible.map((p) => P(p.x, p.y));
+    stroke(Ps([[lowerIncisor.x, lowerIncisor.y], [lowerIncisor.x + 0.15, lowerIncisor.y + 0.85], [lowerIncisor.x + 0.4, lowerIncisor.y]]), bone, 1, false, false);
+    const chinSkin = [{ x: 8.3, y: 8.05 }, { x: 8.9, y: 6.4 }, { x: 8.7, y: 4.4 }, { x: 7.9, y: 2.3 }, { x: 6.0, y: 1.0 }, { x: 3.6, y: 0.4 }, { x: 2.5, y: -1.5 }, { x: 2.3, y: -5.2 }].map((p, i) => (i < 6 ? rot(p) : p));
+    stroke(chinSkin.map((p) => P(p.x, p.y)), outline, 1.5);
 
-    // Airflow particles from glottis to lips when there is level
-    const path = [P(0.72, 0.86), P(0.70, 0.74), P(0.66, 0.60), P(0.56, 0.52), P(0.42, 0.51), P(0.30, 0.53), P(lipX - 0.02, 0.555)];
-    const want = Math.round(this.level * 18 * (0.3 + this.voice));
-    while (this.particles.length < want) this.particles.push({ t: Math.random(), off: (Math.random() - 0.5) * 0.02, speed: 0.6 + Math.random() * 0.6 });
-    if (this.particles.length > want) this.particles.length = want;
-    ctx.fillStyle = withAlpha(theme("peak"), 0.8);
-    for (const p of this.particles) {
-      p.t += dt * p.speed * (0.5 + this.level);
-      if (p.t > 1) p.t -= 1;
-      const u = p.t * (path.length - 1), i = Math.min(path.length - 2, Math.floor(u)), tt = u - i;
-      const x = lerp(path[i].x, path[i + 1].x, tt), y = lerp(path[i].y, path[i + 1].y, tt) + p.off * s;
-      ctx.fillRect(x - 1, y - 1, 2, 2);
+    // ---- lips (protrude with lipProt, open by lipAp, lower lip rides the jaw)
+    const lipY = 7.45;
+    const upperLip = [P(7.3, 8.05), P(8.3 + prot * 0.6, 8.0), P(8.75 + prot, 7.75), P(8.6 + prot, lipY + A.lipAp / 2), P(7.9 + prot * 0.4, lipY + A.lipAp / 2 + 0.05)];
+    const lowerLip = [P(lowerIncisor.x, lowerIncisor.y + 0.1), P(8.2 + prot * 0.6, 6.85 - jawDrop), P(8.7 + prot, 7.1 - jawDrop * 0.7), P(8.55 + prot, lipY - A.lipAp / 2 - jawDrop * 0.6), P(7.9 + prot * 0.4, lipY - A.lipAp / 2 - jawDrop * 0.6 - 0.05)];
+
+    // ---- tongue outline (body circle at tbX/tbY, tip at ttX/ttY, floor rides the jaw)
+    const tb: P = { x: A.tbX, y: A.tbY }, tt: P = { x: A.ttX, y: A.ttY + A.ttCurl * 0.5 };
+    const floor = [{ x: 5.7, y: 5.0 }, { x: 3.2, y: 4.7 }, { x: 1.4, y: 4.3 }].map(rot);
+    const tongue: P[] = [
+      { x: 0.5, y: 2.8 + lar * 0.5 },
+      { x: tb.x - TONGUE_R, y: tb.y - 0.5 },
+      { x: tb.x - TONGUE_R * 0.7, y: tb.y + TONGUE_R * 0.72 },
+      { x: tb.x, y: tb.y + TONGUE_R },
+      { x: tb.x + TONGUE_R * 0.75, y: tb.y + TONGUE_R * 0.66 },
+      { x: (tb.x + TONGUE_R + tt.x) / 2, y: (tb.y + TONGUE_R * 0.4 + tt.y) / 2 + 0.2 },
+      tt,
+      { x: tt.x - 0.45, y: tt.y - 0.9 },
+      ...floor,
+      { x: 0.9, y: 3.4 + lar * 0.5 },
+    ];
+    const tonguePx = tongue.map((p) => P(p.x, p.y));
+
+    // ---- afterimages (tongue, jaw, lips) from 30/60/90 ms ago
+    if (this.clock - this.lastEcho >= ECHO_EVERY) {
+      this.lastEcho = this.clock;
+      this.echoes.push({ t: this.clock, tongue: tonguePx, mandible: mandiblePx, lips: [upperLip, lowerLip] });
+      while (this.echoes.length && this.clock - this.echoes[0].t > ECHO_KEEP) this.echoes.shift();
+    }
+    for (const [ago, alpha] of [[0.09, 0.10], [0.06, 0.17], [0.03, 0.24]] as const) {
+      const e = this.echoes.find((q) => this.clock - q.t >= ago);
+      if (!e) continue;
+      stroke(e.tongue, withAlpha(tongueC, alpha), 1.5, true);
+      stroke(e.mandible, withAlpha(jawC, alpha * 0.9), 1.2);
+      stroke(e.lips[0], withAlpha(lipC, alpha * 0.9), 1.5); stroke(e.lips[1], withAlpha(lipC, alpha * 0.9), 1.5);
     }
 
-    // Turbulent airflow while breathing / fricatives: white specks whose spawn point
-    // follows the spectral centroid (dark "h" → glottis, bright "s/f" → teeth & lips).
+    // ---- airway centreline: pressure heat (by level) + particle path
+    const roofY = (x: number) => {
+      const pts = [[1.7, 9.05], [2.9, 9.3], [4.3, 9.35], [5.6, 9.15], [6.7, 8.65], [7.3, 7.9], [8.6 + prot, lipY + A.lipAp / 2]];
+      for (let i = 0; i < pts.length - 1; i++) if (x >= pts[i][0] && x <= pts[i + 1][0]) return lerp(pts[i][1], pts[i + 1][1], (x - pts[i][0]) / (pts[i + 1][0] - pts[i][0]));
+      return x < pts[0][0] ? pts[0][1] : pts[pts.length - 1][1];
+    };
+    const tongueTopY = (x: number) => {
+      const top = tongue.slice(1, 7);
+      for (let i = 0; i < top.length - 1; i++) if (x >= top[i].x && x <= top[i + 1].x) return lerp(top[i].y, top[i + 1].y, (x - top[i].x) / (top[i + 1].x - top[i].x));
+      return x < top[0].x ? top[0].y : top[top.length - 1].y;
+    };
+    const airway: P[] = [{ x: 0, y: 0 }, { x: 0.2, y: 2.4 + lar * 0.3 }, { x: 0.4, y: 5.0 }, { x: 0.3, y: 7.4 }, { x: 1.2, y: 8.5 }];
+    for (const x of [2.4, 3.6, 4.8, 6.0, 7.0]) airway.push({ x, y: (roofY(x) + tongueTopY(x)) / 2 });
+    airway.push({ x: 8.65 + prot, y: lipY - jawDrop * 0.3 });
+    const airPx = airway.map((p) => P(p.x, p.y));
+    {
+      const lv = this.level;
+      const heat = lv < 0.35 ? withAlpha(theme("peak"), 0.35 + lv) : lv < 0.7 ? withAlpha(theme("target"), 0.6 + lv * 0.4) : withAlpha(theme("fg-0"), 0.9);
+      stroke(airPx, heat, 1.2 + lv * 1.2);
+    }
+
+    // ---- tongue, mandible, lips (current)
+    fillPath(tonguePx, withAlpha(tongueC, 0.12 + this.voice * 0.1));
+    stroke(tonguePx, tongueC, 2, true);
+    {
+      const J = rot({ x: 6.0, y: 5.45 });
+      ctx.strokeStyle = withAlpha(tongueC, 0.25); ctx.lineWidth = 1;
+      for (let i = 0; i < 7; i++) {
+        const ang = Math.PI * (0.22 + 0.82 * (i / 6));
+        const e = { x: tb.x + Math.cos(ang) * TONGUE_R * 0.85, y: tb.y + Math.sin(ang) * TONGUE_R * 0.85 };
+        const a = P(J.x, J.y), b = P(e.x, e.y), c = P((J.x + e.x) / 2 - 0.6, (J.y + e.y) / 2 + 0.3);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(c.x, c.y, b.x, b.y); ctx.stroke();
+      }
+    }
+    stroke(mandiblePx, jawC, 1.6);
+    stroke(upperLip, lipC, 2); stroke(lowerLip, lipC, 2);
+
+    // ---- caliper: narrowest oral constriction (tongue–palate) or the lips
+    if (live) {
+      let best = { x: 0, gap: Infinity };
+      for (let x = 1.8; x <= 7.2; x += 0.2) { const gap = roofY(x) - tongueTopY(x); if (gap < best.gap) best = { x, gap }; }
+      const lipGap = A.lipAp;
+      const atLips = lipGap < best.gap;
+      const gx = atLips ? 8.6 + prot : best.x, gap = atLips ? lipGap : best.gap;
+      const y1 = atLips ? lipY + lipGap / 2 : roofY(gx), y2 = atLips ? lipY - lipGap / 2 - jawDrop * 0.6 : tongueTopY(gx);
+      const a = P(gx, y1), b = P(gx, y2);
+      ctx.strokeStyle = theme("fg-0"); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.fillStyle = theme("fg-0"); ctx.font = font(9); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(gap < 0.05 ? "CLOSED" : `${Math.max(0, gap).toFixed(1)} cm`, a.x + 4, (a.y + b.y) / 2);
+    }
+
+    // ---- glottis: folds pulse at f0 while voiced, held apart while breathing
+    {
+      const gap = 0.05 + (this.voice > 0.2 ? 0.22 * Math.abs(Math.sin(this.phase * Math.PI)) : 0) + 0.35 * this.breath * (1 - this.voice);
+      const foldC = this.voice > 0.2 ? theme("clip") : outline;
+      stroke(Ps([[-gap, 0.9 + lar], [-gap * 1.8, 0.0 + lar], [-gap, -0.6 + lar]]), foldC, 1.5);
+      stroke(Ps([[gap, 0.9 + lar], [gap * 1.8, 0.0 + lar], [gap, -0.6 + lar]]), foldC, 1.5);
+    }
+
+    // ---- airflow particles (phonation) and turbulence (breath / fricatives)
+    const along = (t: number, off: number): P => {
+      const u = Math.min(0.999, Math.max(0, t)) * (airPx.length - 1), i = Math.min(airPx.length - 2, Math.floor(u)), tt2 = u - i;
+      return { x: lerp(airPx[i].x, airPx[i + 1].x, tt2) + (t > 1 ? (t - 1) * s * 3 : 0), y: lerp(airPx[i].y, airPx[i + 1].y, tt2) + off * s };
+    };
+    const want = Math.round(this.level * 24 * (0.3 + this.voice));
+    while (this.particles.length < want) this.particles.push({ t: Math.random() * 0.1, off: (Math.random() - 0.5) * 0.5, speed: 0.5 + Math.random() * 0.5, life: 0.6 + Math.random() * 0.8 });
+    for (let q = this.particles.length - 1; q >= 0; q--) {
+      const p = this.particles[q];
+      p.t += dt * p.speed * (0.4 + this.level); p.life -= dt * 0.25;
+      if (p.t > 1.06 || p.life <= 0) { if (this.particles.length > want) { this.particles.splice(q, 1); continue; } p.t = Math.random() * 0.08; p.life = 0.6 + Math.random() * 0.8; }
+      const pt = along(p.t, p.off);
+      ctx.fillStyle = withAlpha(theme("peak"), 0.16 + 0.4 * Math.min(1, p.life));
+      ctx.fillRect(pt.x - 1, pt.y - 1, 2, 2);
+    }
     const want2 = Math.round(this.breath * 40);
-    const spawnT = f.centroid > 4000 ? 0.78 : f.centroid > 2000 ? 0.45 : 0.08;
-    while (this.turb.length < want2) this.turb.push({ t: spawnT + Math.random() * 0.15, off: (Math.random() - 0.5) * 0.05, speed: 1.2 + Math.random(), life: 0.3 + Math.random() * 0.4 });
+    const spawnT = f.centroid > 4000 ? 0.8 : f.centroid > 2000 ? 0.5 : 0.08;
+    while (this.turb.length < want2) this.turb.push({ t: spawnT + Math.random() * 0.15, off: (Math.random() - 0.5) * 0.6, speed: 1.2 + Math.random(), life: 0.3 + Math.random() * 0.4 });
     ctx.fillStyle = withAlpha(theme("fg-0"), 0.85);
     for (let q = this.turb.length - 1; q >= 0; q--) {
       const p = this.turb[q];
-      p.t += dt * p.speed; p.life -= dt; p.off += (Math.random() - 0.5) * 0.01;
-      if (p.life <= 0 || p.t > 1.08) { this.turb.splice(q, 1); continue; }
-      const u = Math.min(0.999, p.t) * (path.length - 1), i2 = Math.min(path.length - 2, Math.floor(u)), tt2 = u - i2;
-      const x = lerp(path[i2].x, path[i2 + 1].x, tt2) + (p.t > 1 ? (p.t - 1) * -s * 2 : 0), y = lerp(path[i2].y, path[i2 + 1].y, tt2) + p.off * s;
-      ctx.fillRect(x - 1, y - 1, 2, 2);
+      p.t += dt * p.speed; p.life -= dt; p.off += (Math.random() - 0.5) * 0.1;
+      if (p.life <= 0 || p.t > 1.1) { this.turb.splice(q, 1); continue; }
+      const pt = along(p.t, p.off);
+      ctx.fillRect(pt.x - 1, pt.y - 1, 2, 2);
     }
     if (this.turb.length > want2 + 10) this.turb.length = want2 + 10;
 
-    // Lungs gauge (bottom-right): fill = inferred volume, ring brightens while breathing.
+    // ---- lungs gauge + breath rate (below the trachea)
     {
-      const gx = w - 18, gy = h - 18, gr = 10;
+      const gx = P(0, -5.2).x, gy = h - 16, gr = 9;
       ctx.strokeStyle = withAlpha(theme("fg-2"), 0.8); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = withAlpha(theme("sig-2"), 0.35 + 0.5 * this.breath);
       ctx.beginPath(); ctx.arc(gx, gy, gr * Math.max(0.1, Math.sqrt(this.lung)), 0, Math.PI * 2); ctx.fill();
-      if (this.breath > 0.2) {
-        ctx.strokeStyle = withAlpha(theme("fg-0"), this.breath); ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(gx, gy, gr + 2, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1;
-      }
-      ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(this.breathRate > 0 ? `${this.breathRate.toFixed(0)}/min` : "lungs", gx - gr - 5, gy);
+      if (this.breath > 0.2) { ctx.strokeStyle = withAlpha(theme("fg-0"), this.breath); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(gx, gy, gr + 2, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1; }
+      ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(this.breathRate > 0 ? `${this.breathRate.toFixed(0)}/min` : "lungs", gx + gr + 5, gy);
     }
 
-    // Readouts
+    // ---- readouts
     ctx.font = font(10);
     ctx.fillStyle = theme("fg-1");
     ctx.textAlign = "right"; ctx.textBaseline = "top";
     const fx = w - 6;
-    const rows = [["F1", f.f1], ["F2", f.f2], ["F3", f.f3]] as const;
-    rows.forEach(([n, v], i) => ctx.fillText(`${n} ${live && v > 0 ? v.toFixed(0) + " Hz" : "—"}`, fx, 4 + i * 13));
+    ([["F1", this.f1], ["F2", this.f2], ["F3", f.f3]] as const).forEach(([n, v], i) => ctx.fillText(`${n} ${live && v > 0 ? v.toFixed(0) + " Hz" : "—"}`, fx, 4 + i * 13));
+    ctx.fillText(`jaw ${A.jaw.toFixed(1)}  lips ${A.lipAp.toFixed(1)} cm`, fx, 4 + 3 * 13);
     ctx.textAlign = "left";
     ctx.fillStyle = theme("fg-2");
     const breathy = live && f.voiced < 0.65;
     ctx.fillText(live ? (breathy ? "voiced · breathy" : "voiced") : this.breath > 0.2 ? (f.centroid > 4000 ? "fricative" : "breath") : "unvoiced", 6, 4);
+    ctx.fillText(this.velum < 0.6 ? "velum open" : "velum shut", 6, 17);
   }
 }

@@ -2,6 +2,7 @@
 // Average formants of American English vowels (Peterson & Barney 1952, public data),
 // per speaker group. Values in Hz.
 import { modSetting, setModSetting } from "../state";
+import { targetFormants } from "./articulation";
 
 export interface VowelRef { ipa: string; f1: number; f2: number; hint: string }
 export type VoiceType = "male" | "female" | "child";
@@ -36,6 +37,13 @@ export function vowels(type: VoiceType = voiceType()): VowelRef[] {
   return TABLE[type].map(([f1, f2], i) => ({ ipa: ORDER[i], f1, f2, hint: HINTS[ORDER[i]] }));
 }
 
+/** Extra reference vowels not in Peterson & Barney (e, o, a, ə, ɯ, ɤ …), from the
+ *  chimera-vocal-synth vowel table (MIT, see THIRD_PARTY_NOTICES.md). Drawn dimmer. */
+export function extraVowels(type: VoiceType = voiceType()): VowelRef[] {
+  const core = new Set(ORDER);
+  return targetFormants(type).filter((v) => !core.has(v.ipa)).map((v) => ({ ipa: v.ipa, f1: v.f1, f2: v.f2, hint: "" }));
+}
+
 /** Perceptual-ish distance in log-formant space, F1 weighted more than F2. */
 export function vowelDistance(f1: number, f2: number, v: VowelRef): number {
   const a = 2.2 * Math.log(f1 / v.f1);
@@ -46,7 +54,7 @@ export function vowelDistance(f1: number, f2: number, v: VowelRef): number {
 export function nearestVowel(f1: number, f2: number, type: VoiceType = voiceType()): { v: VowelRef; d: number } | null {
   if (!(f1 > 0) || !(f2 > 0)) return null;
   let best: VowelRef | null = null, bd = Infinity;
-  for (const v of vowels(type)) {
+  for (const v of [...vowels(type), ...extraVowels(type)]) {
     const d = vowelDistance(f1, f2, v);
     if (d < bd) { bd = d; best = v; }
   }

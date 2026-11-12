@@ -1,7 +1,7 @@
 import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
-import { Median, nearestVowel, RANGES, setVoiceType, VOICE_LABELS, voiceType, vowels, type VoiceType } from "./vowels";
+import { extraVowels, Median, nearestVowel, RANGES, setVoiceType, VOICE_LABELS, voiceType, vowels, type VoiceType } from "./vowels";
 
 // Phonetician orientation: F2 on x decreasing to the right (front vowels left),
 // F1 on y increasing downward (close vowels top). Both axes log.
@@ -95,6 +95,15 @@ export class VowelMapModule implements Module {
     }
     while (this.trail.length && this.time - this.trail[0].t > TRAIL_S) this.trail.shift();
 
+    // Extra reference vowels (dim)
+    ctx.font = font(11);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const v of extraVowels(type)) {
+      if (v.f1 < F1_LO || v.f1 > F1_HI || v.f2 < F2_LO || v.f2 > F2_HI) continue;
+      const hot = near?.v.ipa === v.ipa;
+      ctx.fillStyle = hot ? theme("sig") : withAlpha(theme("fg-2"), 0.9);
+      ctx.fillText(v.ipa, xOf(v.f2), yOf(v.f1));
+    }
     // Reference vowels
     ctx.font = font(13, 500);
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
