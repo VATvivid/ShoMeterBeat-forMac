@@ -24,6 +24,10 @@ pub struct VoiceAnalyzer {
     fs: f32, // decimated rate
     win: Vec<f32>,
     pub envelope: Vec<f32>,
+    /// Last accepted f0 (continuity) and a pending big jump awaiting confirmation.
+    prev_f0: f32,
+    pending: Option<(f32, u8)>,
+    ac: Vec<f32>,
 }
 
 impl VoiceAnalyzer {
@@ -33,7 +37,7 @@ impl VoiceAnalyzer {
         let win = (0..n)
             .map(|i| 0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos())
             .collect();
-        Self { fs, win, envelope: vec![-120.0; N_ENV] }
+        Self { fs, win, envelope: vec![-120.0; N_ENV], prev_f0: 0.0, pending: None, ac: Vec::new() }
     }
 
     /// Number of full-rate mono samples needed for one analysis.
@@ -59,30 +63,106 @@ impl VoiceAnalyzer {
             for v in self.envelope.iter_mut() {
                 *v = -120.0;
             }
+            self.prev_f0 = 0.0;
+            self.pending = None;
             return out;
         }
 
-        // ---- pitch / voicing: normalised autocorrelation on the un-emphasised frame
-        let lag_min = (self.fs / 1000.0) as usize;
-        let lag_max = ((self.fs / 60.0) as usize).min(n / 2);
-        let r0: f32 = x.iter().map(|v| v * v).sum::<f32>().max(1e-9);
-        let (mut best_lag, mut best) = (0usize, 0.0f32);
-        for lag in lag_min..=lag_max {
-            let mut s = 0.0;
-            for i in 0..n - lag {
-                s += x[i] * x[i + lag];
+        // ---- pitch / voicing: normalised autocorrelation (both segments normalised),
+        // main lobe skipped, local maxima only, octave-down avoided, continuity +
+        // confirmation for big jumps, parabolic interpolation.
+        {
+            let mean = x.iter().sum::<f32>() / n as f32;
+            let d: Vec<f32> = x.iter().map(|v| v - mean).collect();
+            let lag_min = (self.fs / 1000.0) as usize;
+            let lag_max = ((self.fs / 60.0) as usize).min(n / 2);
+            // prefix sums of squares for the two-sided normalisation
+            let mut cum = vec![0.0f32; n + 1];
+            for i in 0..n {
+                cum[i + 1] = cum[i] + d[i] * d[i];
             }
-            let e2: f32 = x[lag..].iter().map(|v| v * v).sum::<f32>().max(1e-9);
-            let r = s / (r0 * e2).sqrt();
-            if r > best {
-                best = r;
-                best_lag = lag;
+            self.ac.clear();
+            self.ac.resize(lag_max + 2, 0.0);
+            for lag in 1..lag_max + 2 {
+                let mut s = 0.0f32;
+                for i in 0..n - lag {
+                    s += d[i] * d[i + lag];
+                }
+                let e1 = (cum[n - lag]).max(1e-9);
+                let e2 = (cum[n] - cum[lag]).max(1e-9);
+                self.ac[lag] = s / (e1 * e2).sqrt();
+            }
+            let ac = &self.ac;
+            // skip the main lobe: first dip below zero or first local minimum past lag_min
+            let mut start = lag_min;
+            for lag in 1..lag_max {
+                if ac[lag] < 0.0 || (lag >= lag_min && ac[lag] < ac[lag - 1] && ac[lag] <= ac[lag + 1]) {
+                    start = lag.max(lag_min);
+                    break;
+                }
+            }
+            let cands: Vec<(f32, usize)> = (start.max(lag_min + 1)..lag_max)
+                .filter(|&l| ac[l] > ac[l - 1] && ac[l] >= ac[l + 1] && ac[l] > 0.3)
+                .map(|l| (ac[l], l))
+                .collect();
+            if cands.is_empty() {
+                self.pending = None;
+            } else {
+                let best = cands.iter().map(|c| c.0).fold(0.0f32, f32::max);
+                // shortest lag nearly as strong as the best → no octave-down error
+                let mut pick = cands.iter().filter(|c| c.0 >= 0.85 * best).map(|c| c.1).min().unwrap();
+                let prev = self.prev_f0;
+                if prev > 0.0 {
+                    if let Some(c) = cands
+                        .iter()
+                        .filter(|c| ((self.fs / c.1 as f32) / prev - 1.0).abs() < 0.25 && c.0 >= 0.75 * best)
+                        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+                    {
+                        pick = c.1;
+                    }
+                }
+                let interp = |l: usize| -> f32 {
+                    let (a, b, c) = (ac[l - 1], ac[l], ac[l + 1]);
+                    let den = a - 2.0 * b + c;
+                    let delta = if den.abs() > 1e-9 { 0.5 * (a - c) / den } else { 0.0 };
+                    self.fs / (l as f32 + delta)
+                };
+                let mut f0 = interp(pick);
+                let mut v = ac[pick];
+                let mut voiced = ((v - 0.3) / 0.5).clamp(0.0, 1.0);
+                if f0 > 500.0 && v < 0.7 {
+                    voiced *= 0.5;
+                }
+                // big jump: accept only when a second frame agrees; meanwhile stay near prev
+                if prev > 0.0 && (f0 / prev > 1.8 || f0 / prev < 0.55) {
+                    let confirmed = matches!(self.pending, Some((pf, _)) if (f0 / pf - 1.0).abs() < 0.2);
+                    if !confirmed {
+                        self.pending = Some((f0, 1));
+                        if let Some(c) = cands
+                            .iter()
+                            .filter(|c| ((self.fs / c.1 as f32) / prev - 1.0).abs() < 0.35 && c.0 >= 0.6 * best)
+                            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+                        {
+                            f0 = interp(c.1);
+                            v = c.0;
+                            voiced = ((v - 0.3) / 0.5).clamp(0.0, 1.0);
+                        } else {
+                            voiced = 0.0;
+                        }
+                    } else {
+                        self.pending = None;
+                    }
+                } else {
+                    self.pending = None;
+                }
+                let _ = v;
+                out.f0 = f0;
+                out.voiced = voiced;
+                if voiced > 0.35 {
+                    self.prev_f0 = f0;
+                }
             }
         }
-        if best_lag > 0 {
-            out.f0 = self.fs / best_lag as f32;
-        }
-        out.voiced = ((best - 0.3) / 0.5).clamp(0.0, 1.0);
 
         // ---- LPC on pre-emphasised, windowed frame
         for i in (1..n).rev() {

@@ -19,15 +19,18 @@ export class PitchModule implements Module {
   readonly id = "pitch";
   readonly title = "Pitch";
   private hist: Float32Array;          // midi or NaN
+  private note: Float32Array;          // block note (hysteresis) or NaN
   private conf: Float32Array;          // 0..1
   private len = 0;                     // valid samples (≤ capacity)
   private acc = 0;
   private center = 60;                 // smoothed window centre (midi)
   private lastMidi = NaN;
+  private curNote = NaN;               // note with hysteresis (±0.6 st before switching)
 
   constructor() {
     const cap = 30 * RATE;
     this.hist = new Float32Array(cap).fill(NaN);
+    this.note = new Float32Array(cap).fill(NaN);
     this.conf = new Float32Array(cap);
   }
 
@@ -42,7 +45,7 @@ export class PitchModule implements Module {
       { type: "select", label: "음역 폭", value: String(this.octaves), options: [1, 2, 3].map((v) => ({ value: String(v), label: `${v}옥타브` })), onChange: (v) => setModSetting(this.id, "octaves", Number(v)) },
       { type: "range", label: "감도 (유성음 문턱)", value: this.minConf, min: 0.1, max: 0.8, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "minConf", v) },
       { type: "toggle", label: "피치 곡선", value: this.showCurve, onChange: (v) => setModSetting(this.id, "curve", v) },
-      { type: "action", label: "기록 지우기", onClick: () => { this.hist.fill(NaN); this.conf.fill(0); this.len = 0; } },
+      { type: "action", label: "기록 지우기", onClick: () => { this.hist.fill(NaN); this.note.fill(NaN); this.conf.fill(0); this.len = 0; } },
     ];
   }
 
@@ -54,7 +57,12 @@ export class PitchModule implements Module {
   }
 
   private push(midi: number, conf: number) {
+    // Store the exact pitch for the curve, but decide the block note with hysteresis so
+    // a pitch wobbling around a semitone boundary doesn't flicker between two blocks.
+    if (Number.isNaN(midi)) this.curNote = NaN;
+    else if (Number.isNaN(this.curNote) || Math.abs(midi - this.curNote) > 0.6) this.curNote = Math.round(midi);
     this.hist.copyWithin(0, 1); this.hist[this.hist.length - 1] = midi;
+    this.note.copyWithin(0, 1); this.note[this.note.length - 1] = this.curNote;
     this.conf.copyWithin(0, 1); this.conf[this.conf.length - 1] = conf;
     this.len = Math.min(this.hist.length, this.len + 1);
   }
@@ -113,12 +121,13 @@ export class PitchModule implements Module {
     const start = this.hist.length - n;
     const sig = theme("sig");
     let i = 0;
+    const MIN_LEN = 3; // blocks shorter than 60 ms are blips — curve only, no block
     while (i < n) {
-      const m = this.hist[start + i];
-      if (Number.isNaN(m)) { i++; continue; }
-      const note = Math.round(m);
+      const note = this.note[start + i];
+      if (Number.isNaN(note)) { i++; continue; }
       let j = i, csum = 0;
-      while (j < n && !Number.isNaN(this.hist[start + j]) && Math.round(this.hist[start + j]) === note) { csum += this.conf[start + j]; j++; }
+      while (j < n && this.note[start + j] === note) { csum += this.conf[start + j]; j++; }
+      if (j - i < MIN_LEN) { i = j; continue; }
       const c = csum / (j - i);
       const bx0 = xOf(i), bx1 = xOf(j - 1) + pw / (total - 1);
       const by = yOf(note + 0.5);
