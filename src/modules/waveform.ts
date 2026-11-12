@@ -1,7 +1,8 @@
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { Frame } from "../engine/frame";
 import { getSource } from "../engine/instance";
-import { inTauri, OV_STRIDE, type WaveOverview } from "../engine/source";
+import { inTauri, OV_STRIDE, type AiTag, type TagStatus, type WaveOverview } from "../engine/source";
+import { GROUP_LABEL, tagGroup, type TagGroup } from "./aitags";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
@@ -32,13 +33,43 @@ export class WaveformModule implements Module {
 
   private get seconds() { return modSetting(this.id, "seconds", 10); }
   private get dbScale() { return modSetting(this.id, "db", false); }
+  private get aiOn() { return modSetting(this.id, "ai", false); }
+  private get aiInterval() { return modSetting(this.id, "aiInterval", 1000); }
+  private get aiFilter() { return modSetting<"all" | TagGroup>(this.id, "aiFilter", "all"); }
+  private get aiMin() { return modSetting(this.id, "aiMin", 0.25); }
+  private tags: AiTag[] = [];
+  private tagSeq = 0;
+  private tagStatus: TagStatus | null = null;
+  private lastTagPoll = 0;
+  private sentTagging: string = "";
 
   settings(): SettingItem[] {
     return [
       { type: "select", label: "시간 범위", value: String(this.seconds), options: [2, 5, 10, 20, 30, 60, 120].map((v) => ({ value: String(v), label: `${v}초` })), onChange: (v) => setModSetting(this.id, "seconds", Number(v)) },
       { type: "toggle", label: "dB 스케일", value: this.dbScale, onChange: (v) => setModSetting(this.id, "db", v) },
       { type: "action", label: "선택 해제 / 재개", onClick: () => this.clearSelection() },
+      { type: "toggle", label: "AI 태그 (YAMNet)", value: this.aiOn, onChange: (v) => setModSetting(this.id, "ai", v) },
+      { type: "select", label: "AI 간격", value: String(this.aiInterval), options: [500, 1000, 2000].map((v) => ({ value: String(v), label: `${v / 1000} s` })), onChange: (v) => setModSetting(this.id, "aiInterval", Number(v)) },
+      { type: "select", label: "AI 필터", value: this.aiFilter, options: [{ value: "all", label: "전체" }, ...(Object.keys(GROUP_LABEL) as TagGroup[]).map((g) => ({ value: g, label: GROUP_LABEL[g] }))], onChange: (v) => setModSetting(this.id, "aiFilter", v) },
+      { type: "range", label: "AI 최소 점수", value: this.aiMin, min: 0.05, max: 0.7, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "aiMin", v) },
     ];
+  }
+
+  /** Keep the engine's tagging state in sync with the settings; pull new tags. */
+  private pollTags() {
+    const src = getSource();
+    if (!src) return;
+    const key = `${this.aiOn}:${this.aiInterval}`;
+    if (key !== this.sentTagging) { this.sentTagging = key; src.setTagging(this.aiOn, this.aiInterval).catch(() => {}); }
+    if (!this.aiOn) return;
+    const now = performance.now();
+    if (now - this.lastTagPoll < 300) return;
+    this.lastTagPoll = now;
+    src.tagsSince(this.tagSeq).then((ts) => {
+      for (const t of ts) { if (t.seq > this.tagSeq) { this.tagSeq = t.seq; this.tags.push(t); } }
+      if (this.tags.length > 400) this.tags.splice(0, this.tags.length - 400);
+    }).catch(() => {});
+    src.tagStatus().then((s) => { this.tagStatus = s; }).catch(() => {});
   }
 
   headReadout() {
@@ -155,6 +186,7 @@ export class WaveformModule implements Module {
   draw(d: DrawCtx, _f: Frame) {
     const { ctx, w, h } = d;
     if (!this.frozen) this.poll();
+    this.pollTags();
     const x0 = PAD_L, x1 = w - PAD_R, y0 = PAD_T, y1 = h - PAD_B;
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 20 || ph < 10) return;
@@ -206,6 +238,35 @@ export class WaveformModule implements Module {
     } else {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(11); ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(inTauri ? "캡처 대기 중…" : "브라우저 미리보기", x0 + pw / 2, mid);
+    }
+
+    // AI tag markers (YAMNet): tick at the window end time + top label, 3 staggered rows
+    if (this.aiOn && this.ov) {
+      const nowT = this.ov.head / this.ov.sr;
+      const filter = this.aiFilter, minS = this.aiMin;
+      let row = 0;
+      ctx.font = font(9, 600); ctx.textBaseline = "top";
+      for (const t of this.tags) {
+        const age = nowT - t.t;
+        if (age < 0 || age > this.seconds) continue;
+        const pick = t.top.find(([, name, score]) => score >= minS && (filter === "all" || tagGroup(name) === filter));
+        if (!pick) continue;
+        const x = x1 - (age / this.seconds) * pw;
+        const g = tagGroup(pick[1]);
+        const col = g === "voice" ? theme("sig") : g === "music" ? theme("sig-2") : g === "sfx" ? theme("peak") : theme("fg-2");
+        ctx.strokeStyle = withAlpha(col, 0.8); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, y0); ctx.lineTo(Math.round(x) + 0.5, y0 + 6 + row * 11); ctx.stroke();
+        ctx.fillStyle = col; ctx.textAlign = "left";
+        const label = `${pick[1]} ${Math.round(pick[2] * 100)}%`;
+        const tw = ctx.measureText(label).width;
+        const lx = Math.min(x + 3, x1 - tw);
+        ctx.fillStyle = withAlpha(theme("bg-1"), 0.75); ctx.fillRect(lx - 2, y0 + row * 11, tw + 4, 10);
+        ctx.fillStyle = col; ctx.fillText(label, lx, y0 + row * 11 + 1);
+        row = (row + 1) % 3;
+      }
+      ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+      const st = this.tagStatus;
+      ctx.fillText(st?.error ? `AI: ${st.error}` : st?.available ? `AI ${st.last_ms.toFixed(0)} ms` : "AI 모델 로딩…", x1 - 2, y1 - 2);
     }
 
     // Selection

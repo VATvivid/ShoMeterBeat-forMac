@@ -14,6 +14,8 @@ pub mod loudness;
 pub mod decode;
 pub mod events;
 pub mod recorder;
+pub mod subtitle;
+pub mod tagger;
 pub mod tempo;
 pub mod voice;
 pub mod wave;
@@ -106,6 +108,8 @@ pub struct Shared {
     pub rec: Mutex<RecState>,
     pub mode: Mutex<Mode>,
     pub wave: Mutex<Option<wave::WaveHistory>>,
+    pub tagger: Arc<Mutex<tagger::TaggerState>>,
+    pub subtitle: Arc<Mutex<subtitle::SubtitleState>>,
 }
 
 impl Shared {
@@ -119,6 +123,8 @@ impl Shared {
             rec: Mutex::new(RecState::default()),
             mode: Mutex::new(Mode::Auto),
             wave: Mutex::new(None),
+            tagger: Arc::new(Mutex::new(tagger::TaggerState::new())),
+            subtitle: Arc::new(Mutex::new(subtitle::SubtitleState::new())),
         })
     }
 
@@ -322,6 +328,8 @@ fn analysis_loop(shared: Arc<Shared>) {
             if let Some(wh) = shared.wave.lock().as_mut() {
                 wh.push(&chunk);
             }
+            shared.tagger.lock().feed(&chunk, sr);
+            shared.subtitle.lock().feed(&chunk, sr);
         }
 
         if last_voice_at.elapsed() >= voice_every {

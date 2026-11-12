@@ -40,7 +40,20 @@ export interface Source {
   /** Sound events (onset clips → feature vectors) with seq > after. */
   eventsSince(after: number): Promise<SoundEvent[]>;
   setOnsetK(k: number): Promise<void>;
+  /** AI tags (YAMNet) with seq > after. */
+  tagsSince(after: number): Promise<AiTag[]>;
+  setTagging(enabled: boolean, intervalMs?: number): Promise<void>;
+  tagStatus(): Promise<TagStatus>;
+  subtitlesSince(after: number): Promise<Subtitle[]>;
+  setSubtitles(enabled: boolean, lang: string, model: string): Promise<void>;
+  subtitleStatus(): Promise<SubStatus>;
 }
+
+export interface Subtitle { seq: number; t0: number; t1: number; text: string; lang: string; ms: number }
+export interface SubStatus { enabled: boolean; model: string; loaded: boolean; loading: boolean; lang: string; queue: number; last_ms: number; error: string | null; models_dir: string }
+
+export interface AiTag { seq: number; t: number; top: [number, string, number][] }
+export interface TagStatus { available: boolean; enabled: boolean; interval_ms: number; last_ms: number; error: string | null }
 
 export interface SoundEvent { seq: number; t: number; peak_db: number; features: number[] }
 
@@ -94,6 +107,12 @@ class TauriSource implements Source {
   readText(path: string) { return invoke<string>("read_text", { path }); }
   eventsSince(after: number) { return invoke<SoundEvent[]>("events_since", { after }); }
   setOnsetK(k: number) { return invoke<void>("set_onset_k", { k }); }
+  tagsSince(after: number) { return invoke<AiTag[]>("tags_since", { after }); }
+  setTagging(enabled: boolean, intervalMs?: number) { return invoke<void>("set_tagging", { enabled, intervalMs }); }
+  tagStatus() { return invoke<TagStatus>("tag_status"); }
+  subtitlesSince(after: number) { return invoke<Subtitle[]>("subtitles_since", { after }); }
+  setSubtitles(enabled: boolean, lang: string, model: string) { return invoke<void>("set_subtitles", { enabled, lang, model }); }
+  subtitleStatus() { return invoke<SubStatus>("subtitle_status"); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -225,7 +244,34 @@ class MockSource implements Source {
   async readText() { return "{}"; }
   private evSeq = 0;
   private evLast = 0;
+  private tagSeq = 0;
+  private tagLast = 0;
+  private tagging = false;
+  private subOn = false; private subSeq = 0; private subLast = 0;
+  async setSubtitles(enabled: boolean) { this.subOn = enabled; }
+  async subtitleStatus(): Promise<SubStatus> { return { enabled: this.subOn, model: "base", loaded: true, loading: false, lang: "auto", queue: 0, last_ms: 420, error: null, models_dir: "(mock)" }; }
+  async subtitlesSince(after: number): Promise<Subtitle[]> {
+    if (!this.subOn) return [];
+    const out: Subtitle[] = [];
+    const lines = ["미리보기 자막입니다.", "The quick brown fox jumps over the lazy dog.", "소리를 분석하는 도구를 만들고 있습니다."];
+    while (this.subLast + 3 <= this.t) { this.subLast += 3; this.subSeq++; out.push({ seq: this.subSeq, t0: this.subLast - 2.5, t1: this.subLast, text: lines[this.subSeq % lines.length], lang: "ko", ms: 400 }); }
+    return out.filter((s) => s.seq > after);
+  }
   async setOnsetK() {}
+  async setTagging(enabled: boolean) { this.tagging = enabled; }
+  async tagStatus(): Promise<TagStatus> { return { available: true, enabled: this.tagging, interval_ms: 500, last_ms: 12, error: null }; }
+  async tagsSince(after: number): Promise<AiTag[]> {
+    if (!this.tagging) return [];
+    const out: AiTag[] = [];
+    while (this.tagLast + 1 <= this.t) {
+      this.tagLast += 1;
+      const pool = Math.floor(this.tagLast) % 3;
+      const top: [number, string, number][] = pool === 0 ? [[0, "Speech", 0.72], [132, "Music", 0.2]] : pool === 1 ? [[428, "Footsteps", 0.55], [471, "Wood", 0.2]] : [[427, "Gunshot, gunfire", 0.61], [430, "Explosion", 0.3]];
+      this.tagSeq++;
+      out.push({ seq: this.tagSeq, t: this.tagLast, top });
+    }
+    return out.filter((t) => t.seq > after);
+  }
   async eventsSince(after: number): Promise<SoundEvent[]> {
     // Three "sample pools" fired on beats; every so often the same sample repeats exactly.
     const now = this.t;

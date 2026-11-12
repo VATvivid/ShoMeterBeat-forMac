@@ -231,6 +231,50 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
     })
 }
 
+// ---- AI tags (YAMNet) ------------------------------------------------------------
+
+#[tauri::command]
+fn tags_since(engine: State<Engine>, after: f64) -> Vec<audio::tagger::Tag> {
+    engine.0.tagger.lock().tags_since(after.max(0.0) as u64)
+}
+
+#[tauri::command]
+fn set_tagging(engine: State<Engine>, enabled: bool, interval_ms: Option<u32>) {
+    let mut t = engine.0.tagger.lock();
+    t.enabled = enabled;
+    if let Some(ms) = interval_ms {
+        t.interval = std::time::Duration::from_millis(ms.clamp(250, 5000) as u64);
+        t.status.interval_ms = ms;
+    }
+    t.status.enabled = enabled;
+}
+
+#[tauri::command]
+fn tag_status(engine: State<Engine>) -> audio::tagger::TagStatus {
+    engine.0.tagger.lock().status.clone()
+}
+
+// ---- subtitles (whisper) ----------------------------------------------------------
+
+#[tauri::command]
+fn subtitles_since(engine: State<Engine>, after: f64) -> Vec<audio::subtitle::Subtitle> {
+    engine.0.subtitle.lock().subs_since(after.max(0.0) as u64)
+}
+
+#[tauri::command]
+fn set_subtitles(engine: State<Engine>, enabled: bool, lang: Option<String>, model: Option<String>) {
+    let mut s = engine.0.subtitle.lock();
+    s.enabled = enabled;
+    if let Some(l) = lang { s.lang = l.clone(); s.status.lang = l; }
+    if let Some(m) = model { s.model = m.clone(); s.status.model = m; }
+    s.status.enabled = enabled;
+}
+
+#[tauri::command]
+fn subtitle_status(engine: State<Engine>) -> audio::subtitle::SubStatus {
+    engine.0.subtitle.lock().status.clone()
+}
+
 // ---- sound events (Variation Map) ------------------------------------------------
 
 #[tauri::command]
@@ -284,13 +328,24 @@ pub fn run() {
     audio::start(shared.clone());
 
     tauri::Builder::default()
+        .setup({
+            let shared = shared.clone();
+            move |app| {
+                use tauri::Manager;
+                let dir = audio::tagger::model_dir(app.path().resource_dir().ok());
+                audio::tagger::start(shared.tagger.clone(), dir.clone());
+                let models_dir = dir.or_else(|| app.path().resource_dir().ok().map(|r| r.join("models")));
+                audio::subtitle::start(shared.subtitle.clone(), models_dir);
+                Ok(())
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .manage(Engine(shared))
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
-            events_since, set_onset_k
+            events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");

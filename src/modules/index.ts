@@ -14,6 +14,7 @@ import { TransientModule } from "./transient";
 import { StereoBandsModule } from "./stereobands";
 import { PlayerModule } from "./player";
 import { VariationMapModule } from "./variationmap";
+import { SubtitlesModule } from "./subtitles";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -33,6 +34,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   stereobands: () => new StereoBandsModule(),
   player: () => new PlayerModule(),
   variation: () => new VariationMapModule(),
+  subtitles: () => new SubtitlesModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -51,6 +53,7 @@ export const MODULE_TITLES: Record<string, string> = {
   stereobands: "Stereo Bands (대역별 폭)",
   player: "Player (파일 재생 · 분석)",
   variation: "Variation Map (베리에이션 · 반복 감지)",
+  subtitles: "Subtitles (자막 · whisper)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */

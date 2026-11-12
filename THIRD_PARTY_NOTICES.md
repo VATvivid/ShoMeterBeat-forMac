@@ -42,3 +42,21 @@ the nih-plug repository for the full terms before redistributing the VST3 build.
 
 Core vowel references (10 vowels, male/female/child) are the published averages of
 Peterson & Barney (1952), *Control methods used in a study of the vowels*.
+
+## YAMNet (AI sound-event tagging model)
+
+`models/yamnet.onnx` is the ONNX export of Google's YAMNet (AudioSet, 521 classes) from
+https://huggingface.co/zeropointnine/yamnet-onnx (converted with tf2onnx from the official
+TensorFlow SavedModel), with `yamnet_class_map.csv` from
+https://github.com/tensorflow/models/tree/master/research/audioset/yamnet.
+Both are Apache License 2.0 (Copyright Google LLC). The files are downloaded by
+`scripts/fetch_models.py` and shipped as app resources. Inference runs locally with
+ONNX Runtime (MIT, Microsoft) via the `ort` crate.
+
+## whisper.cpp (live subtitles)
+
+Speech recognition uses whisper.cpp through the `whisper-rs` crate (MIT) with ggml
+Whisper models (`ggml-base.bin`, `ggml-small.bin`, …) from
+https://huggingface.co/ggerganov/whisper.cpp (MIT; original OpenAI Whisper weights, MIT).
+Models are not shipped with the installer; download with
+`scripts/fetch_models.py --whisper base` or place them in `%APPDATA%\re-minimeter\models`.

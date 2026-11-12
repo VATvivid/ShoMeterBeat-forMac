@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "resources": ["plugins/**/*"],
+    "resources": ["plugins/**/*", "models/yamnet.onnx", "models/yamnet_class_map.csv", "models/onnxruntime.dll", "models/onnxruntime_providers_shared.dll", "models/ORT_LICENSE"],
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   }
