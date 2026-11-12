@@ -1,7 +1,7 @@
 // Frame source: Tauri backend when available, otherwise a synthetic signal so the
 // UI can be developed and screenshotted in a plain browser (`npm run dev`).
 import { invoke } from "@tauri-apps/api/core";
-import { emptyFrame, ENV_MAX_HZ, N_ENV, N_LISSA, N_SCOPE, N_SPEC, parseFrame, pointFreq, SILENCE_DB, type Frame } from "./frame";
+import { emptyFrame, ENV_MAX_HZ, N_BANDS, N_ENV, N_LISSA, N_SCOPE, N_SPEC, parseFrame, pointFreq, SILENCE_DB, type Frame } from "./frame";
 
 export type DeviceKind = "output" | "input";
 export interface DeviceEntry { name: string; kind: DeviceKind; default: boolean }
@@ -29,15 +29,17 @@ export interface Source {
   waveOverview(seconds: number): Promise<WaveOverview | null>;
   /** Exports absolute frames [start, end) of the history to a WAV; resolves to frames written. */
   waveExport(start: number, end: number, dst: string): Promise<number>;
+  /** Average spectrum (dB, N_SPEC points) of a WAV file. */
+  analyzeReference(path: string): Promise<number[]>;
 }
 
-export interface WaveOverview { sr: number; head: number; cols: Float32Array /* min,max pairs, oldest first */ }
+export interface WaveOverview { sr: number; head: number; cols: Float32Array /* min,max,rms triples, oldest first */ }
 
 export function parseOverview(buf: ArrayBuffer): WaveOverview | null {
   const v = new Float32Array(buf);
   if (v.length < 4) return null;
   const n = v[1] | 0;
-  return { sr: v[0], head: v[2] * 65536 + v[3], cols: v.subarray(4, 4 + n * 2) };
+  return { sr: v[0], head: v[2] * 65536 + v[3], cols: v.subarray(4, 4 + n * 3) };
 }
 
 class TauriSource implements Source {
@@ -60,6 +62,7 @@ class TauriSource implements Source {
   recDefaultName() { return invoke<string>("rec_default_name"); }
   async waveOverview(seconds: number) { return parseOverview(await invoke<ArrayBuffer>("wave_overview", { seconds })); }
   waveExport(start: number, end: number, dst: string) { return invoke<number>("wave_export", { start, end, dst }); }
+  analyzeReference(path: string) { return invoke<number[]>("analyze_reference", { path }); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -138,6 +141,7 @@ class MockSource implements Source {
       f.envelope[i] = -30 + g(f.f1, 90, 24) + g(f.f2, 140, 18) + g(f.f3, 200, 12) - hz / 400;
     }
     f.recSeconds = this.recAt === null ? -1 : (performance.now() - this.recAt) / 1000;
+    for (let b = 0; b < N_BANDS; b++) { f.bands[2 * b] = [0.95, 0.8, 0.5 + 0.3 * Math.sin(this.t), 0.2][b]; f.bands[2 * b + 1] = [0.03, 0.12, 0.3, 0.45][b]; }
     f.running = true;
     f.sampleRate = sr;
     f.channels = 2;
@@ -169,14 +173,15 @@ class MockSource implements Source {
       const t = this.whead / 100;
       const beat = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2)), 8);
       const a = 0.08 + 0.5 * beat + 0.05 * Math.random();
-      this.wcols.push(-a * (0.7 + 0.3 * Math.random()), a);
+      this.wcols.push(-a * (0.7 + 0.3 * Math.random()), a, a * 0.6);
       this.whead++;
     }
-    if (this.wcols.length > 2 * 120 * 100) this.wcols.splice(0, this.wcols.length - 2 * 120 * 100);
-    const n = Math.min(this.wcols.length / 2, Math.round(seconds * 100));
-    return { sr: 48000, head: this.whead * 480, cols: new Float32Array(this.wcols.slice(this.wcols.length - n * 2)) };
+    if (this.wcols.length > 3 * 120 * 100) this.wcols.splice(0, this.wcols.length - 3 * 120 * 100);
+    const n = Math.min(this.wcols.length / 3, Math.round(seconds * 100));
+    return { sr: 48000, head: this.whead * 480, cols: new Float32Array(this.wcols.slice(this.wcols.length - n * 3)) };
   }
   async waveExport() { return 0; }
+  async analyzeReference() { return Array.from({ length: N_SPEC }, (_, i) => -30 - 4.5 * Math.log2(pointFreq(i) / 1000) + 3 * Math.sin(i / 9)); }
 }
 
 export function createSource(): Source {

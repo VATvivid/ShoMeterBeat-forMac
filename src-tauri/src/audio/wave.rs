@@ -17,9 +17,11 @@ pub struct WaveHistory {
     col_frames: usize,
     cols_min: Vec<f32>,
     cols_max: Vec<f32>,
+    cols_rms: Vec<f32>,
     cols_cap: usize,
     cur_min: f32,
     cur_max: f32,
+    cur_sq: f32,
     cur_n: usize,
 }
 
@@ -34,9 +36,11 @@ impl WaveHistory {
             col_frames: (sr as usize / COLS_PER_SEC).max(1),
             cols_min: Vec::new(),
             cols_max: Vec::new(),
+            cols_rms: Vec::new(),
             cols_cap: CAP_SECS * COLS_PER_SEC,
             cur_min: 0.0,
             cur_max: 0.0,
+            cur_sq: 0.0,
             cur_n: 0,
         }
     }
@@ -55,30 +59,34 @@ impl WaveHistory {
             if self.cur_n == 0 {
                 self.cur_min = m;
                 self.cur_max = m;
+                self.cur_sq = 0.0;
             } else {
                 self.cur_min = self.cur_min.min(m);
                 self.cur_max = self.cur_max.max(m);
             }
+            self.cur_sq += m * m;
             self.cur_n += 1;
             if self.cur_n >= self.col_frames {
                 self.cols_min.push(self.cur_min);
                 self.cols_max.push(self.cur_max);
+                self.cols_rms.push((self.cur_sq / self.cur_n as f32).sqrt());
                 if self.cols_min.len() > self.cols_cap {
                     let drop = self.cols_min.len() - self.cols_cap;
                     self.cols_min.drain(..drop);
                     self.cols_max.drain(..drop);
+                    self.cols_rms.drain(..drop);
                 }
                 self.cur_n = 0;
             }
         }
     }
 
-    /// Packed overview: [sr, n, head_hi, head_lo, min0, max0, min1, max1, …] for the
-    /// last `seconds` (n ≤ seconds·100 columns, oldest first).
+    /// Packed overview: [sr, n, head_hi, head_lo, min0, max0, rms0, min1, max1, rms1, …]
+    /// for the last `seconds` (n ≤ seconds·100 columns, oldest first).
     pub fn overview(&self, seconds: f32) -> Vec<u8> {
         let want = ((seconds.max(0.1) * COLS_PER_SEC as f32) as usize).min(self.cols_min.len());
         let start = self.cols_min.len() - want;
-        let mut v: Vec<f32> = Vec::with_capacity(4 + want * 2);
+        let mut v: Vec<f32> = Vec::with_capacity(4 + want * 3);
         v.push(self.sr as f32);
         v.push(want as f32);
         v.push((self.head / 65536) as f32);
@@ -86,6 +94,7 @@ impl WaveHistory {
         for i in start..self.cols_min.len() {
             v.push(self.cols_min[i]);
             v.push(self.cols_max[i]);
+            v.push(self.cols_rms[i]);
         }
         let mut bytes = Vec::with_capacity(v.len() * 4);
         for x in v {
@@ -134,6 +143,8 @@ mod tests {
         assert_eq!(v[0], 1000.0);
         assert_eq!(v[1] as usize, 100);
         assert_eq!(v[2] * 65536.0 + v[3], 2000.0);
+        assert_eq!(v.len(), 4 + 100 * 3);
+        assert!((v[6] - 0.5).abs() < 1e-5); // rms of ±0.5 square
         let dir = std::env::temp_dir().join("re-minimeter-test");
         let dst = dir.join("sel.wav");
         let n = h.export(1500, 1600, &dst).unwrap();

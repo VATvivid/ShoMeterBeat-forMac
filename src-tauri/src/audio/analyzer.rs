@@ -2,7 +2,7 @@
 //! buffers. Everything here is instantaneous; ballistics (release, peak hold,
 //! smoothing) live in the UI so they can be tuned without touching Rust.
 
-use super::frame::{Frame, N_LISSA, N_SCOPE, N_SPEC, SILENCE_DB};
+use super::frame::{Frame, BAND_EDGES, N_BANDS, N_LISSA, N_SCOPE, N_SPEC, SILENCE_DB};
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::sync::Arc;
@@ -29,6 +29,8 @@ pub struct Analyzer {
     sr: f32,
     flatness: f32,
     centroid: f32,
+    spec_l: Vec<Complex<f32>>,
+    stereo_bands: [f32; 2 * N_BANDS],
 }
 
 impl Analyzer {
@@ -66,6 +68,8 @@ impl Analyzer {
             sr,
             flatness: 0.0,
             centroid: 0.0,
+            spec_l: vec![Complex::new(0.0, 0.0); FFT_N / 2 + 1],
+            stereo_bands: [0.0; 2 * N_BANDS],
         }
     }
 
@@ -114,6 +118,31 @@ impl Analyzer {
             self.scratch[i] = Complex::new(s * self.window[i], 0.0);
         }
         self.fft.process(&mut self.scratch);
+        if ch == 0 {
+            self.spec_l.copy_from_slice(&self.scratch[..=FFT_N / 2]);
+        } else {
+            // Per-band stereo correlation and width from the two complex spectra.
+            let bin_hz = self.sr / FFT_N as f32;
+            for b in 0..N_BANDS {
+                let lo = ((BAND_EDGES[b] / bin_hz) as usize).max(1);
+                let hi = ((BAND_EDGES[b + 1] / bin_hz) as usize).min(FFT_N / 2);
+                let (mut ll, mut rr, mut lr, mut mm, mut ss) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+                for i in lo..hi {
+                    let l = self.spec_l[i];
+                    let r = self.scratch[i];
+                    ll += l.norm_sqr() as f64;
+                    rr += r.norm_sqr() as f64;
+                    lr += (l * r.conj()).re as f64;
+                    let m = (l + r) * 0.5;
+                    let s = (l - r) * 0.5;
+                    mm += m.norm_sqr() as f64;
+                    ss += s.norm_sqr() as f64;
+                }
+                let denom = (ll * rr).sqrt();
+                self.stereo_bands[2 * b] = if denom > 1e-12 { (lr / denom).clamp(-1.0, 1.0) as f32 } else { 0.0 };
+                self.stereo_bands[2 * b + 1] = if mm + ss > 1e-12 { (ss / (mm + ss)) as f32 } else { 0.0 };
+            }
+        }
         // Full-scale sine → 0 dB: |X| = N * gain * A / 2, so A = 2|X| / (N * gain).
         let norm = 2.0 / (FFT_N as f32 * self.window_gain);
         for i in 0..=FFT_N / 2 {
@@ -180,6 +209,7 @@ impl Analyzer {
         self.block_peak = [0.0; 2];
         f.flatness = self.flatness;
         f.centroid = self.centroid;
+        f.bands.copy_from_slice(&self.stereo_bands);
 
         f.scope_l = self.tail(0, N_SCOPE);
         f.scope_r = self.tail(1, N_SCOPE);
@@ -192,6 +222,36 @@ impl Analyzer {
         }
         f
     }
+}
+
+/// Average spectrum (dB, N_SPEC log points) of a mono signal — for reference overlays.
+pub fn reference_spectrum(mono: &[f32], sr: u32) -> Vec<f32> {
+    let mut a = Analyzer::new(sr);
+    let hop = FFT_N / 2;
+    let mut acc = vec![0.0f64; N_SPEC];
+    let mut n = 0usize;
+    let mut fed = 0usize;
+    let mut buf: Vec<f32> = Vec::with_capacity(hop * 2);
+    for chunk in mono.chunks(hop) {
+        buf.clear();
+        for &s in chunk {
+            buf.push(s);
+            buf.push(s);
+        }
+        a.feed(&buf);
+        fed += chunk.len();
+        if fed >= FFT_N {
+            let f = a.snapshot();
+            for i in 0..N_SPEC {
+                acc[i] += 10f64.powf(f.spectrum_l[i] as f64 / 10.0);
+            }
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return vec![SILENCE_DB; N_SPEC];
+    }
+    acc.iter().map(|p| (10.0 * (p / n as f64).log10()).max(SILENCE_DB as f64) as f32).collect()
 }
 
 /// Log-spaced centre frequency of output point `i` (20 Hz … 20 kHz).

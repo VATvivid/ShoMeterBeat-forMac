@@ -185,8 +185,8 @@ export class WaveformModule implements Module {
 
     // Envelope
     const ov = this.ov;
-    if (ov && ov.cols.length >= 2) {
-      const n = ov.cols.length / 2;
+    if (ov && ov.cols.length >= 3) {
+      const n = ov.cols.length / 3;
       const colsWanted = this.seconds * 100;
       const sig = theme("sig");
       ctx.fillStyle = withAlpha(sig, 0.85);
@@ -196,7 +196,7 @@ export class WaveformModule implements Module {
         // columns covering this pixel (right-aligned: last column at x1)
         const c0 = Math.floor(((px) / pw) * colsWanted) - (colsWanted - n), c1 = Math.max(c0 + 1, Math.floor(((px + 1) / pw) * colsWanted) - (colsWanted - n));
         let mn = Infinity, mx = -Infinity;
-        for (let c = Math.max(0, c0); c < Math.min(n, c1); c++) { mn = Math.min(mn, ov.cols[2 * c]); mx = Math.max(mx, ov.cols[2 * c + 1]); }
+        for (let c = Math.max(0, c0); c < Math.min(n, c1); c++) { mn = Math.min(mn, ov.cols[3 * c]); mx = Math.max(mx, ov.cols[3 * c + 1]); }
         if (mn === Infinity) continue;
         const yt = mid - amp(mx) * ph / 2, yb = mid - amp(mn) * ph / 2;
         const x = x0 + px + 0.5;

@@ -144,6 +144,49 @@ fn rec_info(engine: State<Engine>) -> audio::recorder::RecInfo {
     engine.0.rec.lock().info.clone()
 }
 
+// ---- reference spectrum --------------------------------------------------------
+
+/// Average spectrum (dB, 256 log points) of a WAV file, for the Spectrum overlay.
+/// Reads up to 120 s. Supports PCM 8/16/24/32-bit and float WAV (hound).
+#[tauri::command]
+fn analyze_reference(path: String) -> Result<Vec<f32>, String> {
+    let mut r = hound::WavReader::open(&path).map_err(|e| format!("WAV 열기 실패: {e}"))?;
+    let spec = r.spec();
+    let ch = spec.channels.max(1) as usize;
+    let max_frames = 120 * spec.sample_rate as usize;
+    let mut mono: Vec<f32> = Vec::new();
+    let mut acc = 0.0f32;
+    let mut k = 0usize;
+    let mut push = |s: f32, mono: &mut Vec<f32>| {
+        acc += s;
+        k += 1;
+        if k == ch {
+            mono.push(acc / ch as f32);
+            acc = 0.0;
+            k = 0;
+        }
+    };
+    match (spec.sample_format, spec.bits_per_sample) {
+        (hound::SampleFormat::Float, _) => {
+            for s in r.samples::<f32>() {
+                push(s.map_err(|e| e.to_string())?, &mut mono);
+                if mono.len() >= max_frames { break; }
+            }
+        }
+        (hound::SampleFormat::Int, bits) => {
+            let scale = 1.0 / ((1u64 << (bits as u64 - 1)) as f32);
+            for s in r.samples::<i32>() {
+                push(s.map_err(|e| e.to_string())? as f32 * scale, &mut mono);
+                if mono.len() >= max_frames { break; }
+            }
+        }
+    }
+    if mono.len() < 8192 {
+        return Err("파일이 너무 짧습니다 (0.2초 이상 필요)".into());
+    }
+    Ok(audio::analyzer::reference_spectrum(&mono, spec.sample_rate))
+}
+
 // ---- waveform history ----------------------------------------------------------
 
 /// Min/max envelope of the last `seconds` (see `audio/wave.rs` for the layout).
@@ -176,7 +219,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
-            wave_overview, wave_export
+            wave_overview, wave_export, analyze_reference
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");
