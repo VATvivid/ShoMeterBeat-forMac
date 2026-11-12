@@ -282,7 +282,10 @@ pub fn start(state: Arc<Mutex<SubtitleState>>, models_dir: Option<PathBuf>) {
                 params.set_print_special(false);
                 params.set_print_realtime(false);
                 params.set_print_timestamps(false);
-                params.set_n_threads(4);
+                // Utterances are ≤ 10 s: shrink the encoder context (default 1500 = 30 s)
+                // so short clips don't pay for a 30 s encode. 512 ≈ 10.2 s of audio.
+                params.set_audio_ctx(512);
+                params.set_n_threads(std::thread::available_parallelism().map(|n| (n.get() / 2).clamp(4, 8) as i32).unwrap_or(4));
                 params.set_no_context(true);
                 params.set_suppress_blank(true);
                 if let Err(e) = st.full(params, &job.audio) {

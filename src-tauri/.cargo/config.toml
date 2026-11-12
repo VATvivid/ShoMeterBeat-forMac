@@ -1,0 +1,18 @@
+# Build-time environment for native dependencies (whisper.cpp via whisper-rs-sys).
+# whisper-rs-sys forwards every CMAKE_* / GGML_* variable as a CMake define; without
+# these MSVC gets no optimisation flags and ggml runs scalar (≈ 30× slower).
+[env]
+CMAKE_C_FLAGS_RELEASE = "/O2 /DNDEBUG /arch:AVX2"
+CMAKE_CXX_FLAGS_RELEASE = "/O2 /DNDEBUG /arch:AVX2 /utf-8"
+CMAKE_C_FLAGS_RELWITHDEBINFO = "/O2 /DNDEBUG /arch:AVX2"
+CMAKE_CXX_FLAGS_RELWITHDEBINFO = "/O2 /DNDEBUG /arch:AVX2 /utf-8"
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+GGML_SSE42 = "ON"
+GGML_BMI2 = "ON"
+# Tools for the `subtitles` feature (bindgen needs libclang; cmake crate reads CMAKE)
+LIBCLANG_PATH = "C:/Program Files/LLVM/bin"
+CMAKE = "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
