@@ -6,7 +6,7 @@ use super::frame::N_ENV;
 
 /// Analysis rate after 4× decimation of 48 kHz (also fine for 44.1 kHz → 11.025 kHz).
 const DECIM: usize = 4;
-const LPC_ORDER: usize = 14;
+const LPC_MAX: usize = 14;
 const ENV_MAX_HZ: f32 = 5000.0;
 const PRE_EMPHASIS: f32 = 0.97;
 
@@ -91,8 +91,11 @@ impl VoiceAnalyzer {
         for i in 0..n {
             x[i] *= self.win[i];
         }
-        let mut r = [0.0f32; LPC_ORDER + 1];
-        for (k, rk) in r.iter_mut().enumerate() {
+        // Higher-pitched voices have widely spaced harmonics that a high-order LPC
+        // locks onto; lower the order with pitch (standard practice for female/child voices).
+        let order = if out.f0 > 260.0 { 10 } else if out.f0 > 180.0 { 12 } else { LPC_MAX };
+        let mut r = [0.0f32; LPC_MAX + 1];
+        for (k, rk) in r.iter_mut().enumerate().take(order + 1) {
             let mut s = 0.0;
             for i in 0..n - k {
                 s += x[i] * x[i + k];
@@ -102,13 +105,13 @@ impl VoiceAnalyzer {
         if r[0] <= 1e-9 {
             return out;
         }
-        let a = levinson(&r);
+        let a = levinson(&r, order);
         // Spectral envelope 0..ENV_MAX_HZ
         for (k, e) in self.envelope.iter_mut().enumerate() {
             let hz = ENV_MAX_HZ * k as f32 / (N_ENV - 1) as f32;
             let w = 2.0 * std::f32::consts::PI * hz / self.fs;
             let (mut re, mut im) = (1.0f32, 0.0f32);
-            for (i, ai) in a.iter().enumerate().skip(1) {
+            for (i, ai) in a.iter().enumerate().take(order + 1).skip(1) {
                 re += ai * (w * i as f32).cos();
                 im -= ai * (w * i as f32).sin();
             }
@@ -128,9 +131,9 @@ impl VoiceAnalyzer {
         let mut idx = 0;
         for (hz, _) in peaks {
             let (lo, hi) = match idx {
-                0 => (180.0, 1200.0),
-                1 => (500.0, 3200.0),
-                _ => (1400.0, 4500.0),
+                0 => (180.0, 1400.0),
+                1 => (500.0, 3700.0),
+                _ => (1400.0, 4900.0),
             };
             if hz < lo || hz > hi || hz < last + 150.0 {
                 continue;
@@ -150,9 +153,8 @@ impl VoiceAnalyzer {
 }
 
 /// Levinson–Durbin: autocorrelation r[0..=p] → predictor a[0..=p] with a[0] = 1.
-fn levinson(r: &[f32; LPC_ORDER + 1]) -> [f32; LPC_ORDER + 1] {
-    let p = LPC_ORDER;
-    let mut a = [0.0f32; LPC_ORDER + 1];
+fn levinson(r: &[f32; LPC_MAX + 1], p: usize) -> [f32; LPC_MAX + 1] {
+    let mut a = [0.0f32; LPC_MAX + 1];
     a[0] = 1.0;
     let mut err = r[0];
     for i in 1..=p {

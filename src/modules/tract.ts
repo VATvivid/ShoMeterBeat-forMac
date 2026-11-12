@@ -1,7 +1,7 @@
 import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
-import type { DrawCtx, Module } from "./types";
-import { nearestVowel, tongueFromFormants } from "./vowels";
+import type { DrawCtx, Module, SettingItem } from "./types";
+import { Median, nearestVowel, setVoiceType, tongueFromFormants, VOICE_LABELS, voiceType, type VoiceType } from "./vowels";
 
 // Midsagittal vocal-tract profile (face looks left) driven by the live formant
 // estimate: F1 → jaw/tongue height, F2 → tongue frontness, back vowels → lip
@@ -22,9 +22,18 @@ export class TractModule implements Module {
   private level = 0;      // 0..1 from momentary loudness
   private phase = 0;      // glottal cycle
   private particles: { t: number; off: number; speed: number }[] = [];
+  private m1 = new Median(5);
+  private m2 = new Median(5);
+  private f1 = 0; private f2 = 0;
+
+  settings(): SettingItem[] {
+    return [
+      { type: "select", label: "음성 유형", value: voiceType(), options: (Object.keys(VOICE_LABELS) as VoiceType[]).map((k) => ({ value: k, label: VOICE_LABELS[k] })), onChange: (v) => setVoiceType(v as VoiceType) },
+    ];
+  }
 
   headReadout(f: Frame) {
-    const n = f.voiced > 0.4 ? nearestVowel(f.f1, f.f2) : null;
+    const n = f.voiced > 0.4 ? nearestVowel(this.f1, this.f2) : null;
     return `${n ? "[" + n.v.ipa + "] " : ""}f0 ${f.f0 > 0 && f.voiced > 0.4 ? f.f0.toFixed(0) : "—"} Hz`;
   }
 
@@ -32,12 +41,13 @@ export class TractModule implements Module {
     const { ctx, w, h, dt } = d;
     // ---- state update
     const live = f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0;
+    if (live) { this.f1 = this.m1.push(f.f1); this.f2 = this.m2.push(f.f2); }
     const k = Math.min(1, dt * 10);
     const lvl = Math.min(1, Math.max(0, (f.lufsM + 50) / 40));
     this.level += (lvl - this.level) * k;
     this.voice += ((live ? f.voiced : 0) - this.voice) * k;
     if (live) {
-      const t = tongueFromFormants(f.f1, f.f2);
+      const t = tongueFromFormants(this.f1, this.f2);
       this.height += (t.height - this.height) * k;
       this.front += (t.front - this.front) * k;
       this.round += ((1 - t.front) * 0.8 * (t.height > 0.4 ? 1 : 0.5) - this.round) * k;

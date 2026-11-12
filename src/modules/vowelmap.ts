@@ -1,14 +1,12 @@
 import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
-import type { DrawCtx, Module } from "./types";
-import { nearestVowel, VOWELS } from "./vowels";
+import type { DrawCtx, Module, SettingItem } from "./types";
+import { Median, nearestVowel, RANGES, setVoiceType, VOICE_LABELS, voiceType, vowels, type VoiceType } from "./vowels";
 
 // Phonetician orientation: F2 on x decreasing to the right (front vowels left),
 // F1 on y increasing downward (close vowels top). Both axes log.
-const F2_HI = 2600, F2_LO = 700;
-const F1_LO = 220, F1_HI = 1000;
-const F2_TICKS = [2500, 2000, 1500, 1000, 800];
-const F1_TICKS = [300, 400, 500, 600, 800, 1000];
+const F2_TICKS = [3500, 3000, 2500, 2000, 1500, 1000, 800];
+const F1_TICKS = [300, 400, 500, 600, 800, 1000, 1200];
 const TRAIL_S = 1.5;
 const PAD = { l: 34, r: 10, t: 10, b: 22 };
 
@@ -20,15 +18,28 @@ export class VowelMapModule implements Module {
   private sx = 0; private sy = 0; private has = false;
   private age = 0;
   private time = 0;
+  private m1 = new Median(5);
+  private m2 = new Median(5);
+  private f1 = 0; private f2 = 0;
+
+  settings(): SettingItem[] {
+    return [
+      { type: "select", label: "음성 유형", value: voiceType(), options: (Object.keys(VOICE_LABELS) as VoiceType[]).map((k) => ({ value: k, label: VOICE_LABELS[k] })), onChange: (v) => setVoiceType(v as VoiceType) },
+    ];
+  }
 
   headReadout(f: Frame) {
-    const n = f.voiced > 0.4 ? nearestVowel(f.f1, f.f2) : null;
-    return n ? `[${n.v.ipa}]  F1 ${f.f1.toFixed(0)}  F2 ${f.f2.toFixed(0)}` : "—";
+    const n = f.voiced > 0.4 ? nearestVowel(this.f1, this.f2) : null;
+    return n ? `[${n.v.ipa}]  F1 ${this.f1.toFixed(0)}  F2 ${this.f2.toFixed(0)}  (${VOICE_LABELS[voiceType()]})` : "—";
   }
 
   draw(d: DrawCtx, f: Frame) {
     const { ctx, w, h, dt } = d;
     this.time += dt;
+    const type = voiceType();
+    const [F1_LO, F1_HI, F2_LO, F2_HI] = RANGES[type];
+    const VOWELS = vowels(type);
+    if (f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0) { this.f1 = this.m1.push(f.f1); this.f2 = this.m2.push(f.f2); }
     const x0 = PAD.l, x1 = w - PAD.r, y0 = PAD.t, y1 = h - PAD.b;
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 40 || ph < 40) return;
@@ -44,6 +55,7 @@ export class VowelMapModule implements Module {
     ctx.textBaseline = "top";
     ctx.textAlign = "center";
     for (const t of F2_TICKS) {
+      if (t > F2_HI || t < F2_LO) continue;
       const x = Math.round(xOf(t)) + 0.5;
       ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
       ctx.fillText(t >= 1000 ? `${t / 1000}k` : `${t}`, x, y1 + 5);
@@ -51,6 +63,7 @@ export class VowelMapModule implements Module {
     ctx.textBaseline = "middle";
     ctx.textAlign = "right";
     for (const t of F1_TICKS) {
+      if (t > F1_HI || t < F1_LO) continue;
       const y = Math.round(yOf(t)) + 0.5;
       ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
       ctx.fillText(`${t}`, x0 - 4, y);
@@ -69,9 +82,9 @@ export class VowelMapModule implements Module {
 
     // Live marker state
     const live = f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0;
-    const near = live ? nearestVowel(f.f1, f.f2) : null;
+    const near = live ? nearestVowel(this.f1, this.f2, type) : null;
     if (live) {
-      const tx = xOf(f.f2), ty = yOf(f.f1);
+      const tx = xOf(this.f2), ty = yOf(this.f1);
       if (!this.has) { this.sx = tx; this.sy = ty; this.has = true; }
       const k = Math.min(1, dt * 14);
       this.sx += (tx - this.sx) * k; this.sy += (ty - this.sy) * k;
