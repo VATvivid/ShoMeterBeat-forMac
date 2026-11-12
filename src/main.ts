@@ -4,7 +4,7 @@ import { createSource, inTauri } from "./engine/source";
 import { Grid } from "./layout/grid";
 import { MODULE_TITLES } from "./modules";
 import { applyDock } from "./dock";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { applyPresetState, capturePreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
 import { GRID_DIMS, layoutKindFor, resetLayout, saveLayout, saveSettings, settings, type DockMode } from "./state";
 
