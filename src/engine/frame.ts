@@ -4,6 +4,8 @@ export const HEADER = 32;
 export const N_SPEC = 256;
 export const N_SCOPE = 1024;
 export const N_LISSA = 512;
+export const N_ENV = 128;
+export const ENV_MAX_HZ = 5000;
 export const SILENCE_DB = -120;
 export const F_LO = 20;
 export const F_HI = 20000;
@@ -24,11 +26,19 @@ export interface Frame {
   maxTP: number;
   maxM: number;
   maxS: number;
+  f0: number;
+  f1: number;
+  f2: number;
+  f3: number;
+  voiced: number;
+  /** Seconds recorded so far, or -1 when not recording. */
+  recSeconds: number;
   specL: Float32Array;
   specR: Float32Array;
   scopeL: Float32Array;
   scopeR: Float32Array;
   lissa: Float32Array; // interleaved L,R
+  envelope: Float32Array; // LPC envelope dB, 0..ENV_MAX_HZ linear
 }
 
 export function pointFreq(i: number): number {
@@ -63,11 +73,18 @@ export function parseFrame(buf: ArrayBuffer): Frame | null {
     maxTP: v[17],
     maxM: v[18],
     maxS: v[19],
+    f0: v[22],
+    f1: v[23],
+    f2: v[24],
+    f3: v[25],
+    voiced: v[26],
+    recSeconds: v[27],
     specL: take(N_SPEC),
     specR: take(N_SPEC),
     scopeL: take(N_SCOPE),
     scopeR: take(N_SCOPE),
     lissa: take(2 * N_LISSA),
+    envelope: v.length >= o + N_ENV ? take(N_ENV) : new Float32Array(N_ENV).fill(SILENCE_DB),
   };
 }
 
@@ -77,7 +94,9 @@ export function emptyFrame(): Frame {
     peak: [SILENCE_DB, SILENCE_DB], rms: [SILENCE_DB, SILENCE_DB], truePeak: [SILENCE_DB, SILENCE_DB],
     correlation: 0, lufsM: SILENCE_DB, lufsS: SILENCE_DB, lufsI: SILENCE_DB, lra: 0,
     maxTP: SILENCE_DB, maxM: SILENCE_DB, maxS: SILENCE_DB,
+    f0: 0, f1: 0, f2: 0, f3: 0, voiced: 0, recSeconds: -1,
     specL: new Float32Array(N_SPEC).fill(SILENCE_DB), specR: new Float32Array(N_SPEC).fill(SILENCE_DB),
     scopeL: new Float32Array(N_SCOPE), scopeR: new Float32Array(N_SCOPE), lissa: new Float32Array(2 * N_LISSA),
+    envelope: new Float32Array(N_ENV).fill(SILENCE_DB),
   };
 }

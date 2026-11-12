@@ -78,6 +78,18 @@ impl Analyzer {
         self.block_peak[1] = self.block_peak[1].max(pk[1]);
     }
 
+    /// Last `n` mono (L+R)/2 samples, oldest first.
+    pub fn mono_tail(&self, n: usize) -> Vec<f32> {
+        let n = n.min(FFT_N);
+        let start = (self.pos + FFT_N - n) % FFT_N;
+        (0..n)
+            .map(|i| {
+                let k = (start + i) % FFT_N;
+                0.5 * (self.hist[0][k] + self.hist[1][k])
+            })
+            .collect()
+    }
+
     /// Last `n` samples of channel `ch`, oldest first.
     fn tail(&self, ch: usize, n: usize) -> Vec<f32> {
         let n = n.min(FFT_N);

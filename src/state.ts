@@ -1,4 +1,6 @@
 // Persisted settings and layout (localStorage inside the Tauri webview).
+import type { LevelMode } from "./modules/levels";
+
 export interface TileRect { x: number; y: number; w: number; h: number; on: boolean }
 export type Layout = Record<string, TileRect>;
 
@@ -10,20 +12,23 @@ export const MIN_H = 3;
 export interface Settings {
   device: string | null;
   loudnessTarget: number;
+  levelMode: LevelMode;
 }
 
 const SETTINGS_KEY = "rm.settings.v1";
-const LAYOUT_KEY = "rm.layout.v1";
+const LAYOUT_KEY = "rm.layout.v2";
 
 /** DESIGN.md §5 default arrangement on a 24×16 grid. */
 export function defaultLayout(): Layout {
   return {
-    spectrum: { x: 0, y: 0, w: 16, h: 8, on: true },
-    loudness: { x: 16, y: 0, w: 8, h: 8, on: true },
-    spectrogram: { x: 0, y: 8, w: 12, h: 8, on: true },
-    stereo: { x: 12, y: 8, w: 6, h: 8, on: true },
-    levels: { x: 18, y: 8, w: 3, h: 8, on: true },
-    scope: { x: 21, y: 8, w: 3, h: 8, on: true },
+    spectrum: { x: 0, y: 0, w: 12, h: 7, on: true },
+    loudness: { x: 12, y: 0, w: 6, h: 7, on: true },
+    levels: { x: 18, y: 0, w: 3, h: 7, on: true },
+    scope: { x: 21, y: 0, w: 3, h: 7, on: true },
+    spectrogram: { x: 0, y: 7, w: 9, h: 9, on: true },
+    stereo: { x: 9, y: 7, w: 5, h: 9, on: true },
+    tract: { x: 14, y: 7, w: 5, h: 9, on: true },
+    vowelmap: { x: 19, y: 7, w: 5, h: 9, on: true },
   };
 }
 
@@ -37,7 +42,7 @@ function load<T>(key: string, fallback: T): T {
   }
 }
 
-export const settings: Settings = load(SETTINGS_KEY, { device: null, loudnessTarget: -14 });
+export const settings: Settings = load(SETTINGS_KEY, { device: null, loudnessTarget: -14, levelMode: "peak" });
 export const layout: Layout = load(LAYOUT_KEY, defaultLayout());
 
 export function saveSettings() {

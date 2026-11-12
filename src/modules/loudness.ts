@@ -8,7 +8,7 @@ const HIST_HZ = 10;
 const GRAPH_TOP = 0, GRAPH_BOTTOM = -40;
 
 export const TARGETS: { label: string; lufs: number }[] = [
-  { label: "−14 LUFS (스트리밍)", lufs: -14 },
+  { label: "−14 LUFS (YouTube / Spotify)", lufs: -14 },
   { label: "−16 LUFS (팟캐스트/애플)", lufs: -16 },
   { label: "−18 LUFS", lufs: -18 },
   { label: "−23 LUFS (EBU R128 방송)", lufs: -23 },
@@ -26,10 +26,6 @@ export class LoudnessModule implements Module {
   headControl() {
     const sel = document.createElement("select");
     sel.className = "mini";
-    sel.style.height = "18px";
-    sel.style.minWidth = "0";
-    sel.style.fontSize = "10px";
-    sel.style.padding = "0 18px 0 6px";
     for (const t of TARGETS) {
       const o = document.createElement("option");
       o.value = String(t.lufs);
@@ -93,7 +89,8 @@ export class LoudnessModule implements Module {
     // Target + max readouts (small)
     const topBlockH = Math.max(row2 + 14 + subSize + 10, r3 + 14 + subSize + 10);
     ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText(`target ${target} LUFS · max M ${fmtDb(f.maxM)} · max S ${fmtDb(f.maxS)}`, px, topBlockH);
+    const tname = TARGETS.find((t) => t.lufs === target)?.label ?? `${target} LUFS`;
+    ctx.fillText(`target ${tname} · max M ${fmtDb(f.maxM)} · max S ${fmtDb(f.maxS)}`, px, topBlockH);
 
     // History graph
     const gy0 = topBlockH + 16, gy1 = h - 8, gx0 = 30, gx1 = w - 8;

@@ -11,6 +11,8 @@ pub mod analyzer;
 pub mod capture;
 pub mod frame;
 pub mod loudness;
+pub mod recorder;
+pub mod voice;
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -57,12 +59,28 @@ pub enum Ctl {
     Stop,
 }
 
+/// Recording control from the UI → analysis thread, and its result back.
+pub enum RecCtl {
+    Start,
+    Stop,
+}
+
+#[derive(Default)]
+pub struct RecState {
+    pub pending: Option<RecCtl>,
+    pub info: recorder::RecInfo,
+    /// Finished temp file waiting for save/discard.
+    pub finished: Option<std::path::PathBuf>,
+    pub error: Option<String>,
+}
+
 pub struct Shared {
     pub ring: Mutex<Ring>,
     pub frame: Mutex<frame::Frame>,
     pub status: Mutex<Status>,
     pub ctl: Mutex<Option<mpsc::Sender<Ctl>>>,
     pub reset_loudness: AtomicBool,
+    pub rec: Mutex<RecState>,
 }
 
 impl Shared {
@@ -73,6 +91,7 @@ impl Shared {
             status: Mutex::new(Status::default()),
             ctl: Mutex::new(None),
             reset_loudness: AtomicBool::new(false),
+            rec: Mutex::new(RecState::default()),
         })
     }
 
@@ -156,9 +175,14 @@ fn analysis_loop(shared: Arc<Shared>) {
     let mut sr: u32 = 0;
     let mut an: Option<analyzer::Analyzer> = None;
     let mut lufs: Option<loudness::Loudness> = None;
+    let mut voice: Option<voice::VoiceAnalyzer> = None;
+    let mut rec: Option<recorder::Recorder> = None;
+    let mut last_voice = voice::Voice::default();
     let mut last_publish = Instant::now();
+    let mut last_voice_at = Instant::now();
     let mut seq: u32 = 0;
     let publish_every = Duration::from_micros(16_000); // ~60 fps
+    let voice_every = Duration::from_millis(25); // formants at 40 Hz is plenty
 
     loop {
         std::thread::sleep(Duration::from_millis(4));
@@ -168,11 +192,37 @@ fn analysis_loop(shared: Arc<Shared>) {
             sr = st_sr;
             an = Some(analyzer::Analyzer::new(sr));
             lufs = Some(loudness::Loudness::new(sr));
+            voice = Some(voice::VoiceAnalyzer::new(sr));
         }
-        let (Some(an), Some(lufs)) = (an.as_mut(), lufs.as_mut()) else { continue };
+        let (Some(an), Some(lufs), Some(voice)) = (an.as_mut(), lufs.as_mut(), voice.as_mut()) else { continue };
 
         if shared.reset_loudness.swap(false, Ordering::Relaxed) {
             lufs.reset();
+        }
+
+        // ---- recording control
+        let pending = shared.rec.lock().pending.take();
+        match pending {
+            Some(RecCtl::Start) if rec.is_none() => match recorder::Recorder::start(sr) {
+                Ok(r) => {
+                    let mut s = shared.rec.lock();
+                    s.info = recorder::RecInfo { recording: true, seconds: 0.0, path: Some(r.path.display().to_string()) };
+                    s.error = None;
+                    rec = Some(r);
+                }
+                Err(e) => shared.rec.lock().error = Some(e),
+            },
+            Some(RecCtl::Stop) => {
+                if let Some(r) = rec.take() {
+                    let mut s = shared.rec.lock();
+                    match r.finish() {
+                        Ok(p) => s.finished = Some(p),
+                        Err(e) => s.error = Some(e),
+                    }
+                    s.info = recorder::RecInfo::default();
+                }
+            }
+            _ => {}
         }
 
         let chunk: Vec<f32> = {
@@ -182,6 +232,15 @@ fn analysis_loop(shared: Arc<Shared>) {
         if !chunk.is_empty() {
             an.feed(&chunk);
             lufs.feed(&chunk);
+            if let Some(r) = rec.as_mut() {
+                r.write(&chunk);
+            }
+        }
+
+        if last_voice_at.elapsed() >= voice_every {
+            last_voice_at = Instant::now();
+            let mono = an.mono_tail(voice.needed_samples());
+            last_voice = voice.analyze(&mono);
         }
 
         if last_publish.elapsed() >= publish_every {
@@ -194,6 +253,20 @@ fn analysis_loop(shared: Arc<Shared>) {
             f.sample_rate = sr as f32;
             f.running = st.running;
             f.channels = st.channels;
+            f.f0 = last_voice.f0;
+            f.f1 = last_voice.f1;
+            f.f2 = last_voice.f2;
+            f.f3 = last_voice.f3;
+            f.voiced = last_voice.voiced;
+            f.envelope.copy_from_slice(&voice.envelope);
+            f.rec_seconds = match rec.as_ref() {
+                Some(r) => {
+                    let s = r.seconds();
+                    shared.rec.lock().info.seconds = s;
+                    s
+                }
+                None => -1.0,
+            };
             *shared.frame.lock() = f;
         }
     }

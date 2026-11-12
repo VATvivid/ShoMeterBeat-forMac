@@ -11,7 +11,8 @@
     "smoke": "vite build --config scripts/vite.smoke.mjs && node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.0"
+    "@tauri-apps/api": "^2.12.0",
+    "@tauri-apps/plugin-dialog": "^2.8.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.0",

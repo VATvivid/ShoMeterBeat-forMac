@@ -11,12 +11,15 @@
 //! 13 LUFS momentary      14 LUFS short     15 LUFS integrated   16 LRA (LU)
 //! 17 max true peak       18 max momentary  19 max short
 //! 20 running (1/0)       21 channels
-//! 22..32 reserved
+//! 22 f0 (Hz)            23 F1 (Hz)       24 F2 (Hz)          25 F3 (Hz)
+//! 26 voiced (0..1)      27 rec seconds (<0 = not recording)
+//! 28..32 reserved
 //! 32                      spectrum L  [N_SPEC] dB
 //! 32+N_SPEC               spectrum R  [N_SPEC] dB
 //! 32+2*N_SPEC             scope L     [N_SCOPE]
 //! +N_SCOPE                scope R     [N_SCOPE]
 //! +N_SCOPE                lissajous   [2*N_LISSA] interleaved L,R
+//! +2*N_LISSA              LPC envelope [N_ENV] dB, 0..5 kHz linear
 //! ```
 
 pub const MAGIC: f32 = 7331.0;
@@ -24,6 +27,7 @@ pub const HEADER: usize = 32;
 pub const N_SPEC: usize = 256;
 pub const N_SCOPE: usize = 1024;
 pub const N_LISSA: usize = 512;
+pub const N_ENV: usize = 128;
 pub const SILENCE_DB: f32 = -120.0;
 
 #[derive(Clone, Debug)]
@@ -43,11 +47,18 @@ pub struct Frame {
     pub max_tp: f32,
     pub max_m: f32,
     pub max_s: f32,
+    pub f0: f32,
+    pub f1: f32,
+    pub f2: f32,
+    pub f3: f32,
+    pub voiced: f32,
+    pub rec_seconds: f32,
     pub spectrum_l: Vec<f32>,
     pub spectrum_r: Vec<f32>,
     pub scope_l: Vec<f32>,
     pub scope_r: Vec<f32>,
     pub lissa: Vec<f32>,
+    pub envelope: Vec<f32>,
 }
 
 impl Default for Frame {
@@ -68,18 +79,25 @@ impl Default for Frame {
             max_tp: SILENCE_DB,
             max_m: SILENCE_DB,
             max_s: SILENCE_DB,
+            f0: 0.0,
+            f1: 0.0,
+            f2: 0.0,
+            f3: 0.0,
+            voiced: 0.0,
+            rec_seconds: -1.0,
             spectrum_l: vec![SILENCE_DB; N_SPEC],
             spectrum_r: vec![SILENCE_DB; N_SPEC],
             scope_l: vec![0.0; N_SCOPE],
             scope_r: vec![0.0; N_SCOPE],
             lissa: vec![0.0; 2 * N_LISSA],
+            envelope: vec![SILENCE_DB; N_ENV],
         }
     }
 }
 
 impl Frame {
     pub fn pack(&self) -> Vec<u8> {
-        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA;
+        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV;
         let mut v: Vec<f32> = Vec::with_capacity(total);
         v.extend_from_slice(&[
             MAGIC,
@@ -104,6 +122,12 @@ impl Frame {
             self.max_s,
             if self.running { 1.0 } else { 0.0 },
             self.channels as f32,
+            self.f0,
+            self.f1,
+            self.f2,
+            self.f3,
+            self.voiced,
+            self.rec_seconds,
         ]);
         v.resize(HEADER, 0.0);
         v.extend_from_slice(&self.spectrum_l);
@@ -111,6 +135,7 @@ impl Frame {
         v.extend_from_slice(&self.scope_l);
         v.extend_from_slice(&self.scope_r);
         v.extend_from_slice(&self.lissa);
+        v.extend_from_slice(&self.envelope);
         debug_assert_eq!(v.len(), total);
         let mut bytes = Vec::with_capacity(total * 4);
         for x in v {
@@ -130,7 +155,7 @@ mod tests {
         f.seq = 9;
         f.peak = [-3.0, -6.0];
         let b = f.pack();
-        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA));
+        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV));
         let at = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
         assert_eq!(at(0), MAGIC);
         assert_eq!(at(1), 9.0);
