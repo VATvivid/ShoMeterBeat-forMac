@@ -63,7 +63,7 @@ impl VoiceAnalyzer {
         }
 
         // ---- pitch / voicing: normalised autocorrelation on the un-emphasised frame
-        let lag_min = (self.fs / 500.0) as usize;
+        let lag_min = (self.fs / 1000.0) as usize;
         let lag_max = ((self.fs / 60.0) as usize).min(n / 2);
         let r0: f32 = x.iter().map(|v| v * v).sum::<f32>().max(1e-9);
         let (mut best_lag, mut best) = (0usize, 0.0f32);

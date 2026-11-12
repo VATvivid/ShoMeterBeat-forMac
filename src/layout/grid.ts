@@ -27,15 +27,17 @@ type Rect = { x: number; y: number; w: number; h: number };
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /**
- * Places `movingId` at `target` and pushes every colliding tile in one predictable
- * direction: down (normal / vertical strip) or right (horizontal strip). Tiles may end
- * up beyond the base grid; the grid then grows to fit them. Cascades until stable.
+ * Places `movingId` at `target` and pushes every colliding tile out of the way.
+ * Direction is decided by which side the mover comes from: a tile whose centre is to
+ * the right of the mover is pushed right, one to the left is pushed left — when that
+ * fits in the grid. Otherwise it goes down (free grid / vertical strip) or right
+ * (horizontal strip), growing the grid. Cascades until stable.
  */
 export function resolvePush(layout: Layout, movingId: string, target: Rect, kind: LayoutKind): Record<string, Rect> {
+  const { cols } = GRID_DIMS[kind];
   const out: Record<string, Rect> = {};
   for (const [id, r] of Object.entries(layout)) if (r.on) out[id] = { x: r.x, y: r.y, w: r.w, h: r.h };
   out[movingId] = { ...target };
-  // Process in reading order so cascades are deterministic.
   const order = Object.keys(out).filter((id) => id !== movingId).sort((p, q) => (out[p].y - out[q].y) || (out[p].x - out[q].x));
   const queue = [movingId];
   let iter = 0;
@@ -46,7 +48,13 @@ export function resolvePush(layout: Layout, movingId: string, target: Rect, kind
       if (oid === id) continue;
       const b = out[oid];
       if (!overlap(a, b)) continue;
-      if (kind === "dockh") b.x = a.x + a.w; else b.y = a.y + a.h;
+      const aCx = a.x + a.w / 2, bCx = b.x + b.w / 2;
+      const right = a.x + a.w, left = a.x - b.w;
+      if (kind === "dockv") { b.y = a.y + a.h; }
+      else if (kind === "dockh") { if (bCx < aCx && left >= 0) b.x = left; else b.x = right; }
+      else if (bCx >= aCx && right + b.w <= cols) b.x = right;
+      else if (bCx < aCx && left >= 0) b.x = left;
+      else b.y = a.y + a.h;
       queue.push(oid);
     }
   }

@@ -1,5 +1,6 @@
 import { LevelsModule } from "./levels";
 import { LoudnessModule } from "./loudness";
+import { PitchModule } from "./pitch";
 import { ScopeModule } from "./scope";
 import { SpectrogramModule } from "./spectrogram";
 import { SpectrumModule } from "./spectrum";
@@ -19,6 +20,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   scope: () => new ScopeModule(),
   tract: () => new TractModule(),
   vowelmap: () => new VowelMapModule(),
+  pitch: () => new PitchModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -30,6 +32,7 @@ export const MODULE_TITLES: Record<string, string> = {
   scope: "Oscilloscope",
   tract: "Vocal Tract (발성 기관)",
   vowelmap: "Vowel Map (모음 포먼트)",
+  pitch: "Pitch (노트 블록)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */

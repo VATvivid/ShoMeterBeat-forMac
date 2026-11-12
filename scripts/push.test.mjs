@@ -14,27 +14,32 @@ const noOverlaps = (r) => { const ids = Object.keys(r); for (let i = 0; i < ids.
 let bad = 0;
 const check = (name, cond) => { console.log(cond ? "ok  " : "FAIL", name); if (!cond) bad++; };
 
-// 1) Move A onto B in the free grid → B pushed below A.
-let L = { a: { x: 0, y: 0, w: 12, h: 7, on: true }, b: { x: 12, y: 0, w: 12, h: 7, on: true } };
-let r = resolvePush(L, "a", { x: 12, y: 0, w: 12, h: 7 }, "normal");
-check("push down", noOverlaps(r) === null && r.b.y === 7);
+// 1) Mover comes from the left onto B with room on B's right → B pushed right.
+let L = { a: { x: 0, y: 0, w: 8, h: 7, on: true }, b: { x: 8, y: 0, w: 8, h: 7, on: true } };
+let r = resolvePush(L, "a", { x: 4, y: 0, w: 8, h: 7 }, "normal");
+check("push right", noOverlaps(r) === null && r.b.x === 12 && r.b.y === 0);
 
-// 2) No room below → B still pushed down; the grid grows (rows > 16).
-L = { a: { x: 0, y: 0, w: 12, h: 16, on: true }, b: { x: 12, y: 0, w: 8, h: 16, on: true } };
-r = resolvePush(L, "a", { x: 10, y: 0, w: 12, h: 16 }, "normal");
+// 2) Mover comes from the right onto B with room on B's left → B pushed left.
+L = { a: { x: 16, y: 0, w: 8, h: 7, on: true }, b: { x: 8, y: 0, w: 8, h: 7, on: true } };
+r = resolvePush(L, "a", { x: 12, y: 0, w: 8, h: 7 }, "normal");
+check("push left", noOverlaps(r) === null && r.b.x === 4);
+
+// 3) No sideways room → pushed down; grid grows past 16 rows.
+L = { a: { x: 0, y: 0, w: 12, h: 16, on: true }, b: { x: 12, y: 0, w: 12, h: 16, on: true } };
+r = resolvePush(L, "a", { x: 12, y: 0, w: 12, h: 16 }, "normal");
 check("push down beyond base grid", noOverlaps(r) === null && r.b.y === 16);
 
-// 3) Horizontal strip → B pushed right; columns grow.
+// 4) Horizontal strip, mover from the left → B pushed right (columns grow).
 L = { a: { x: 0, y: 0, w: 12, h: 1, on: true }, b: { x: 12, y: 0, w: 12, h: 1, on: true } };
 r = resolvePush(L, "a", { x: 6, y: 0, w: 12, h: 1 }, "dockh");
 check("push right in strip", noOverlaps(r) === null && r.b.x === 18 && r.b.w === 12);
 
-// 4) Cascade: A pushes B, B pushes C.
-L = { a: { x: 0, y: 0, w: 8, h: 4, on: true }, b: { x: 8, y: 0, w: 8, h: 4, on: true }, c: { x: 8, y: 4, w: 8, h: 4, on: true } };
-r = resolvePush(L, "a", { x: 8, y: 0, w: 8, h: 4 }, "normal");
-check("cascade", noOverlaps(r) === null && r.b.y === 4 && r.c.y === 8);
+// 5) Cascade: A pushes B right, B pushes C right.
+L = { a: { x: 0, y: 0, w: 6, h: 4, on: true }, b: { x: 6, y: 0, w: 6, h: 4, on: true }, c: { x: 12, y: 0, w: 6, h: 4, on: true } };
+r = resolvePush(L, "a", { x: 3, y: 0, w: 6, h: 4 }, "normal");
+check("cascade right", noOverlaps(r) === null && r.b.x === 9 && r.c.x === 15);
 
-// 5) Off tiles are ignored.
+// 6) Off tiles are ignored.
 L = { a: { x: 0, y: 0, w: 8, h: 4, on: true }, z: { x: 8, y: 0, w: 8, h: 4, on: false } };
 r = resolvePush(L, "a", { x: 8, y: 0, w: 8, h: 4 }, "normal");
 check("off ignored", !("z" in r));

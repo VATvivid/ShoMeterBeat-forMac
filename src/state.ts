@@ -55,14 +55,14 @@ export function defaultLayout(kind: LayoutKind): Layout {
     const row = (x: number, w: number) => ({ x, y: 0, w, h: 1, on: true });
     return {
       spectrum: row(0, 8), loudness: row(8, 5), levels: row(13, 2), stereo: row(15, 3), scope: row(18, 3), spectrogram: row(21, 3),
-      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false },
+      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false },
     };
   }
   if (kind === "dockv") {
     const col = (y: number, h: number) => ({ x: 0, y, w: 1, h, on: true });
     return {
       spectrum: col(0, 6), loudness: col(6, 6), levels: col(12, 4), stereo: col(16, 4), scope: col(20, 4),
-      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false },
+      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false },
     };
   }
   return {
@@ -70,10 +70,11 @@ export function defaultLayout(kind: LayoutKind): Layout {
     loudness: { x: 12, y: 0, w: 6, h: 7, on: true },
     levels: { x: 18, y: 0, w: 3, h: 7, on: true },
     scope: { x: 21, y: 0, w: 3, h: 7, on: true },
-    spectrogram: { x: 0, y: 7, w: 9, h: 9, on: true },
-    stereo: { x: 9, y: 7, w: 5, h: 9, on: true },
-    tract: { x: 14, y: 7, w: 5, h: 9, on: true },
-    vowelmap: { x: 19, y: 7, w: 5, h: 9, on: true },
+    spectrogram: { x: 0, y: 7, w: 7, h: 9, on: true },
+    stereo: { x: 7, y: 7, w: 4, h: 9, on: true },
+    tract: { x: 11, y: 7, w: 4, h: 9, on: true },
+    vowelmap: { x: 15, y: 7, w: 4, h: 9, on: true },
+    pitch: { x: 19, y: 7, w: 5, h: 9, on: true },
   };
 }
 

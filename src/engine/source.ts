@@ -103,7 +103,13 @@ class MockSource implements Source {
     f.f1 = vow[k][0] + (vow[k + 1][0] - vow[k][0]) * ease + 10 * Math.sin(this.t * 9);
     f.f2 = vow[k][1] + (vow[k + 1][1] - vow[k][1]) * ease + 25 * Math.sin(this.t * 7);
     f.f3 = 2600 + 150 * Math.sin(this.t * 0.5);
-    f.f0 = 130 + 25 * Math.sin(this.t * 1.7);
+    { // melody: C4 E4 G4 A4 G4 E4 (0.5 s each) with vibrato, pauses every 3 s
+      const seq = [60, 64, 67, 69, 67, 64];
+      const step = Math.floor(this.t / 0.5) % 6;
+      const vib = 0.25 * Math.sin(this.t * 2 * Math.PI * 5.5);
+      f.f0 = 440 * Math.pow(2, (seq[step] + vib - 69) / 12);
+      if (this.t % 4 > 3.4) f.voiced = 0.1;
+    }
     f.voiced = 0.6 + 0.4 * Math.sin(this.t * 2.3) > 0.5 ? 0.9 : 0.2;
     for (let i = 0; i < N_ENV; i++) {
       const hz = (ENV_MAX_HZ * i) / (N_ENV - 1);
