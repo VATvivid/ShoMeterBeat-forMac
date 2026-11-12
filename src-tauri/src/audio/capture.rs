@@ -98,15 +98,32 @@ pub fn start(name: Option<&str>, kind: Kind, shared: Arc<Shared>) -> Result<Capt
     let config: cpal::StreamConfig = supported.config();
 
     let stream = match supported.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(&device, &config, channels, shared)?,
-        cpal::SampleFormat::I16 => build::<i16>(&device, &config, channels, shared)?,
-        cpal::SampleFormat::I32 => build::<i32>(&device, &config, channels, shared)?,
-        cpal::SampleFormat::U16 => build::<u16>(&device, &config, channels, shared)?,
-        other => return Err(format!("지원하지 않는 샘플 형식: {other:?}")),
-    };
-    stream.play().map_err(|e| e.to_string())?;
+        cpal::SampleFormat::F32 => build::<f32>(&device, &config, channels, shared),
+        cpal::SampleFormat::I16 => build::<i16>(&device, &config, channels, shared),
+        cpal::SampleFormat::I32 => build::<i32>(&device, &config, channels, shared),
+        cpal::SampleFormat::U16 => build::<u16>(&device, &config, channels, shared),
+        other => Err(format!("지원하지 않는 샘플 형식: {other:?}")),
+    }
+    .map_err(|e| explain(e, kind))?;
+    stream.play().map_err(|e| explain(e, kind))?;
 
     Ok(Capture { _stream: stream, name: dev_name, kind, sample_rate, channels })
+}
+
+/// Turn backend errors into something a user can act on.
+fn explain(e: impl std::fmt::Display, kind: Kind) -> String {
+    let s = e.to_string();
+    if s.contains("0x80070005") || s.contains("액세스가 거부") || s.contains("Access is denied") {
+        return if kind == Kind::Input {
+            "입력 장치 접근 거부 — Windows 설정 → 개인 정보 및 보안 → 마이크 → '마이크 액세스'와 '데스크톱 앱 허용'을 켜세요".into()
+        } else {
+            format!("출력 장치 접근 거부: {s}")
+        };
+    }
+    if s.contains("0x88890008") || s.contains("AUDCLNT_E_DEVICE_IN_USE") {
+        return "장치가 다른 앱에서 독점 모드로 사용 중입니다".into();
+    }
+    s
 }
 
 fn build<T>(
