@@ -9,15 +9,18 @@ export const ROWS = 16;
 export const MIN_W = 4;
 export const MIN_H = 3;
 
+export type SourceMode = "auto" | "output" | "input" | "plugin";
+
 export interface Settings {
-  /** null = default output device (loopback). */
+  /** auto = default/chosen output loopback + DAW plugins (recommended). */
+  sourceMode: SourceMode;
+  /** Device name for output/input modes; null = default device. */
   device: string | null;
-  deviceKind: "output" | "input";
   loudnessTarget: number;
   levelMode: LevelMode;
 }
 
-const SETTINGS_KEY = "rm.settings.v1";
+const SETTINGS_KEY = "rm.settings.v2";
 const LAYOUT_KEY = "rm.layout.v2";
 
 /** DESIGN.md §5 default arrangement on a 24×16 grid. */
@@ -44,7 +47,7 @@ function load<T>(key: string, fallback: T): T {
   }
 }
 
-export const settings: Settings = load(SETTINGS_KEY, { device: null, deviceKind: "output", loudnessTarget: -14, levelMode: "peak" });
+export const settings: Settings = load(SETTINGS_KEY, { sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak" });
 export const layout: Layout = load(LAYOUT_KEY, defaultLayout());
 
 export function saveSettings() {

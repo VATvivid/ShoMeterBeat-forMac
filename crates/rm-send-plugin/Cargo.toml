@@ -1,0 +1,19 @@
+[package]
+name = "rm-send-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "re-minimeter Send — passes audio through and streams a copy to the re-minimeter app"
+# NOTE: the VST3 export (nih-plug's vst3-sys wrapper) is GPLv3; CLAP export is ISC.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["vst3"] }
+rm-shm = { path = "../rm-shm" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

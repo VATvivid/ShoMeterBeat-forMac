@@ -45,10 +45,28 @@ impl Ring {
     }
 }
 
+/// Where the analyzed signal comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Loopback of an output device **plus** every live DAW plugin slot, summed.
+    #[default]
+    Auto,
+    /// Loopback of one output device only.
+    Output,
+    /// One input (recording) device only.
+    Input,
+    /// DAW plugin slots only.
+    Plugin,
+}
+
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Status {
     pub device: String,
     pub kind: capture::Kind,
+    pub mode: Mode,
+    /// Live DAW plugin instances feeding the bridge.
+    pub plugins: usize,
     pub sample_rate: u32,
     pub channels: u16,
     pub running: bool,
@@ -56,7 +74,7 @@ pub struct Status {
 }
 
 pub enum Ctl {
-    SetDevice(Option<String>, capture::Kind),
+    SetSource(Mode, Option<String>),
     Stop,
 }
 
@@ -82,6 +100,7 @@ pub struct Shared {
     pub ctl: Mutex<Option<mpsc::Sender<Ctl>>>,
     pub reset_loudness: AtomicBool,
     pub rec: Mutex<RecState>,
+    pub mode: Mutex<Mode>,
 }
 
 impl Shared {
@@ -93,6 +112,7 @@ impl Shared {
             ctl: Mutex::new(None),
             reset_loudness: AtomicBool::new(false),
             rec: Mutex::new(RecState::default()),
+            mode: Mutex::new(Mode::Auto),
         })
     }
 
@@ -116,15 +136,38 @@ pub fn start(shared: Arc<Shared>) {
             .spawn(move || {
                 let mut current: Option<capture::Capture> = None;
                 let mut wanted: Option<String> = None;
-                let mut wanted_kind = capture::Kind::Output;
+                let mut mode = Mode::Auto;
                 let mut retry_at = Instant::now();
                 loop {
-                    if current.is_none() && Instant::now() >= retry_at {
-                        match capture::start(wanted.as_deref(), wanted_kind, shared.clone()) {
+                    if mode == Mode::Plugin {
+                        // No device stream: the analysis thread reads the bridge directly.
+                        if current.is_some() {
+                            current = None;
+                        }
+                        let mut st = shared.status.lock();
+                        if !st.running || st.device != "DAW 플러그인" {
+                            let plugins = st.plugins;
+                            *st = Status {
+                                device: "DAW 플러그인".into(),
+                                kind: capture::Kind::Output,
+                                mode,
+                                plugins,
+                                sample_rate: 48_000,
+                                channels: 2,
+                                running: true,
+                                error: None,
+                            };
+                        }
+                    } else if current.is_none() && Instant::now() >= retry_at {
+                        let kind = if mode == Mode::Input { capture::Kind::Input } else { capture::Kind::Output };
+                        match capture::start(wanted.as_deref(), kind, shared.clone()) {
                             Ok(c) => {
+                                let plugins = shared.status.lock().plugins;
                                 *shared.status.lock() = Status {
                                     device: c.name.clone(),
                                     kind: c.kind,
+                                    mode,
+                                    plugins,
                                     sample_rate: c.sample_rate,
                                     channels: c.channels,
                                     running: true,
@@ -143,11 +186,16 @@ pub fn start(shared: Arc<Shared>) {
                         }
                     }
                     match rx.recv_timeout(Duration::from_millis(250)) {
-                        Ok(Ctl::SetDevice(name, kind)) => {
+                        Ok(Ctl::SetSource(m, name)) => {
                             wanted = name;
-                            wanted_kind = kind;
+                            mode = m;
+                            *shared.mode.lock() = m;
                             current = None; // drops the stream
                             retry_at = Instant::now();
+                            let mut st = shared.status.lock();
+                            st.mode = m;
+                            st.running = false;
+                            st.error = None;
                         }
                         Ok(Ctl::Stop) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -181,6 +229,9 @@ fn analysis_loop(shared: Arc<Shared>) {
     let mut lufs: Option<loudness::Loudness> = None;
     let mut voice: Option<voice::VoiceAnalyzer> = None;
     let mut rec: Option<recorder::Recorder> = None;
+    let mut bridge = rm_shm::Reader::open().map_err(|e| log::warn!("bridge: {e}")).ok();
+    let mut bridge_buf: Vec<f32> = Vec::new();
+    let mut last_plugins_at = Instant::now();
     let mut last_voice = voice::Voice::default();
     let mut last_publish = Instant::now();
     let mut last_voice_at = Instant::now();
@@ -229,10 +280,32 @@ fn analysis_loop(shared: Arc<Shared>) {
             _ => {}
         }
 
-        let chunk: Vec<f32> = {
+        let mut chunk: Vec<f32> = {
             let mut r = shared.ring.lock();
             r.data.drain(..).collect()
         };
+        // DAW plugin bridge: summed into the device chunk (Auto) or used alone (Plugin).
+        let mode = *shared.mode.lock();
+        if let (Some(b), true) = (bridge.as_mut(), matches!(mode, Mode::Auto | Mode::Plugin)) {
+            bridge_buf.clear();
+            b.pull(sr, &mut bridge_buf);
+            if !bridge_buf.is_empty() {
+                if chunk.len() < bridge_buf.len() {
+                    chunk.resize(bridge_buf.len(), 0.0);
+                }
+                for (c, p) in chunk.iter_mut().zip(bridge_buf.iter()) {
+                    *c += *p;
+                }
+            }
+            if last_plugins_at.elapsed() >= Duration::from_millis(500) {
+                last_plugins_at = Instant::now();
+                let n = b.live_count();
+                let mut st = shared.status.lock();
+                if st.plugins != n {
+                    st.plugins = n;
+                }
+            }
+        }
         if !chunk.is_empty() {
             an.feed(&chunk);
             lufs.feed(&chunk);

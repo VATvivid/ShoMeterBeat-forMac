@@ -5,7 +5,8 @@ import { emptyFrame, ENV_MAX_HZ, N_ENV, N_LISSA, N_SCOPE, N_SPEC, parseFrame, po
 
 export type DeviceKind = "output" | "input";
 export interface DeviceEntry { name: string; kind: DeviceKind; default: boolean }
-export interface Status { device: string; kind: DeviceKind; sample_rate: number; channels: number; running: boolean; error: string | null }
+export type SourceMode = "auto" | "output" | "input" | "plugin";
+export interface Status { device: string; kind: DeviceKind; mode: SourceMode; plugins: number; sample_rate: number; channels: number; running: boolean; error: string | null }
 export interface RecInfo { recording: boolean; seconds: number; path: string | null }
 
 export const inTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
@@ -13,7 +14,9 @@ export const inTauri = typeof (window as any).__TAURI_INTERNALS__ !== "undefined
 export interface Source {
   tick(): Promise<Frame>;
   listDevices(): Promise<DeviceEntry[]>;
-  setDevice(name: string | null, kind: DeviceKind): Promise<void>;
+  setSource(mode: SourceMode, name: string | null): Promise<void>;
+  /** Copies the bundled DAW plugin into the user plugin folders; returns destinations. */
+  installPlugins(): Promise<string[]>;
   resetLoudness(): Promise<void>;
   status(): Promise<Status>;
   recStart(): Promise<void>;
@@ -33,7 +36,8 @@ class TauriSource implements Source {
     return this.last;
   }
   listDevices() { return invoke<DeviceEntry[]>("list_devices"); }
-  setDevice(name: string | null, kind: DeviceKind) { return invoke<void>("set_device", { name, kind }); }
+  setSource(mode: SourceMode, name: string | null) { return invoke<void>("set_source", { mode, name }); }
+  installPlugins() { return invoke<string[]>("install_plugins"); }
   resetLoudness() { return invoke<void>("reset_loudness"); }
   status() { return invoke<Status>("status"); }
   recStart() { return invoke<void>("rec_start"); }
@@ -119,9 +123,10 @@ class MockSource implements Source {
       { name: "(예시 입력) Loopback 1+2", kind: "input", default: true },
     ];
   }
-  async setDevice() {}
+  async setSource() {}
+  async installPlugins() { return ["(mock) %LOCALAPPDATA%\Programs\Common\CLAP\re-minimeter Send.clap"]; }
   async resetLoudness() { this.integ = -16; }
-  async status(): Promise<Status> { return { device: "합성 신호", kind: "output", sample_rate: 48000, channels: 2, running: true, error: null }; }
+  async status(): Promise<Status> { return { device: "합성 신호", kind: "output", mode: "auto", plugins: 1, sample_rate: 48000, channels: 2, running: true, error: null }; }
   async recStart() { this.recAt = performance.now(); }
   async recStop() { this.recAt = null; return "(mock).wav"; }
   async recSave() {}

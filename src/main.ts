@@ -111,49 +111,52 @@ document.addEventListener("keydown", (e) => {
 
 // ---- device select ---------------------------------------------------------
 const deviceSel = $<HTMLSelectElement>("device-select");
-// Option value = "<kind>|<name>"; "output|" means the default output device.
-const devKey = (kind: string, name: string) => `${kind}|${name}`;
+// Option value = "<mode>|<name>". "auto|" = default output loopback + DAW plugins.
+const srcKey = (mode: string, name: string) => `${mode}|${name}`;
 async function populateDevices() {
   const devs = await source.listDevices();
   deviceSel.innerHTML = "";
   const outs = devs.filter((d) => d.kind === "output"), ins = devs.filter((d) => d.kind === "input");
-  const gOut = document.createElement("optgroup");
-  gOut.label = "출력 장치 (루프백 — 이 장치로 나가는 모든 소리)";
-  const def = document.createElement("option");
-  def.value = devKey("output", "");
-  def.textContent = outs.length ? `기본 출력: ${outs[0].name}` : "출력 장치 없음";
-  gOut.appendChild(def);
-  for (const d of outs.filter((d) => !d.default)) {
-    const o = document.createElement("option");
-    o.value = devKey("output", d.name); o.textContent = d.name;
-    gOut.appendChild(o);
-  }
-  deviceSel.appendChild(gOut);
+  const group = (label: string) => { const g = document.createElement("optgroup"); g.label = label; deviceSel.appendChild(g); return g; };
+  const opt = (g: HTMLOptGroupElement, value: string, text: string) => { const o = document.createElement("option"); o.value = value; o.textContent = text; g.appendChild(o); };
+  const gAuto = group("자동 (권장)");
+  opt(gAuto, srcKey("auto", ""), `자동: 기본 출력 루프백 + DAW 플러그인${outs.length ? ` (${outs[0].name})` : ""}`);
+  for (const d of outs.filter((d) => !d.default)) opt(gAuto, srcKey("auto", d.name), `자동: ${d.name} 루프백 + DAW 플러그인`);
+  const gOut = group("출력 장치만 (루프백)");
+  opt(gOut, srcKey("output", ""), outs.length ? `기본 출력: ${outs[0].name}` : "출력 장치 없음");
+  for (const d of outs.filter((d) => !d.default)) opt(gOut, srcKey("output", d.name), d.name);
   if (ins.length) {
-    const gIn = document.createElement("optgroup");
-    gIn.label = "입력 장치 (인터페이스 루프백 · 가상 케이블 — ASIO 앱 모니터링)";
-    for (const d of ins) {
-      const o = document.createElement("option");
-      o.value = devKey("input", d.name); o.textContent = (d.default ? "기본 입력: " : "") + d.name;
-      gIn.appendChild(o);
-    }
-    deviceSel.appendChild(gIn);
+    const gIn = group("입력 장치만 (인터페이스 루프백 · 가상 케이블)");
+    for (const d of ins) opt(gIn, srcKey("input", d.name), (d.default ? "기본 입력: " : "") + d.name);
   }
-  const wanted = devKey(settings.deviceKind, settings.device ?? "");
+  const gPlug = group("DAW 플러그인");
+  opt(gPlug, srcKey("plugin", ""), "DAW 플러그인만 (re-minimeter Send)");
+  const wanted = srcKey(settings.sourceMode, settings.device ?? "");
   const exists = [...deviceSel.options].some((o) => o.value === wanted);
-  if (exists && wanted !== devKey("output", "")) {
-    deviceSel.value = wanted;
-    await source.setDevice(settings.device, settings.deviceKind);
-  }
+  deviceSel.value = exists ? wanted : srcKey("auto", "");
+  if (deviceSel.value !== srcKey("auto", "")) await source.setSource(settings.sourceMode, settings.device);
 }
 deviceSel.addEventListener("change", async () => {
-  const [kind, ...rest] = deviceSel.value.split("|");
-  settings.deviceKind = kind === "input" ? "input" : "output";
+  const [mode, ...rest] = deviceSel.value.split("|");
+  settings.sourceMode = (["auto", "output", "input", "plugin"].includes(mode) ? mode : "auto") as typeof settings.sourceMode;
   settings.device = rest.join("|") || null;
   saveSettings();
-  await source.setDevice(settings.device, settings.deviceKind);
+  await source.setSource(settings.sourceMode, settings.device);
 });
 populateDevices().catch((e) => console.error(e));
+
+// ---- DAW plugin install --------------------------------------------------------
+$("install-plugin-btn").addEventListener("click", async () => {
+  try {
+    const paths = await source.installPlugins();
+    stState.textContent = `플러그인 설치됨 → ${paths.join(" , ")} — DAW에서 플러그인 재스캔`;
+    stState.className = "ok";
+    stateHoldUntil = performance.now() + 15000;
+  } catch (e) {
+    stState.textContent = `플러그인 설치 실패: ${String(e)}`;
+    stState.className = "err";
+  }
+});
 
 // ---- status bar ------------------------------------------------------------
 const stDevice = $("st-device"), stRate = $("st-rate"), stFps = $("st-fps"), stState = $("st-state");
@@ -162,10 +165,10 @@ let stateHoldUntil = 0; // keep "저장됨: …" visible for a while
 async function pollStatus() {
   try {
     const s = await source.status();
-    stDevice.textContent = `${s.kind === "input" ? "입력" : "루프백"} ${s.device || "—"}`;
+    const src = s.mode === "plugin" ? "플러그인" : s.kind === "input" ? "입력" : s.mode === "auto" ? "자동" : "루프백";
+    stDevice.textContent = `${src} ${s.device || "—"}${s.mode === "auto" || s.mode === "plugin" ? ` · 플러그인 ${s.plugins}` : ""}`;
     stRate.textContent = s.sample_rate ? `${s.sample_rate} Hz · ${s.channels}ch` : "— Hz";
-    if (stState.textContent?.startsWith("저장됨") && performance.now() < stateHoldUntil) return;
-    if (stState.textContent?.startsWith("저장됨")) stateHoldUntil = 0;
+    if (performance.now() < stateHoldUntil) return;
     if (s.error && !s.running) { stState.textContent = `오류: ${s.error}`; stState.className = "err"; }
     else if (recording) { stState.textContent = "녹음 중"; stState.className = "err"; }
     else if (s.running) { stState.textContent = inTauri ? "캡처 중" : "브라우저 미리보기"; stState.className = "ok"; }

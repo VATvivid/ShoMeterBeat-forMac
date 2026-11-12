@@ -15,6 +15,10 @@ src-tauri/src/audio/analyzer.rs FFT 8192·로그 256점 스펙트럼, 피크/RMS
 src-tauri/src/audio/loudness.rs ebur128 (M/S/I/LRA/True Peak)
 src-tauri/src/audio/voice.rs    LPC(14차, 4× 데시메이션) 포먼트 F1~F3 + 자기상관 피치/유성음 판정, 40 Hz 갱신
 src-tauri/src/audio/recorder.rs hound WAV(32-bit float) 녹음 — 임시 폴더에 쓰고 저장 시 이동
+crates/rm-shm/                  공유 메모리 브리지(Local\re-minimeter-bridge-v1, 슬롯 8개 링 버퍼, 선형 리샘플) — 앱과 플러그인이 공유
+crates/rm-send-plugin/          nih-plug CLAP+VST3 "re-minimeter Send" (통과 + 브리지에 사본 쓰기). 빌드: npm run plugin
+src-tauri/plugins/              bundle_plugin.py가 만든 .clap / .vst3 (git 제외, NSIS 리소스로 포함)
+                                소스 모드(audio/mod.rs Mode): Auto=루프백+플러그인 합산(기본) / Output / Input / Plugin
 src/engine/source.ts            Tauri면 invoke('frame'), 아니면 합성 신호(브라우저 개발용)
 src/modules/*.ts                모듈 1개 = 클래스 1개(draw(ctx, frame)), index.ts에 등록
 src/modules/vowels.ts           모음 기준 포먼트(Peterson & Barney 1952 남성 평균)와 거리·혀 위치 변환
