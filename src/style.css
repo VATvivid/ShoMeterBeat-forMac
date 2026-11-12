@@ -185,3 +185,13 @@ body.docked.dock-tiny .tile-head { display: none; }
 }
 .player-bar .btn { height: 22px; padding: 0 8px; }
 .player-bar .name { color: var(--fg-1); font-size: 10px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+
+/* Preset menu */
+#preset-panel { min-width: 260px; }
+.preset-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; }
+.preset-apply { flex: 1; display: flex; align-items: center; gap: 8px; text-align: left; }
+.preset-apply .k { color: var(--fg-2); font-size: 9px; min-width: 38px; }
+.preset-apply .d { margin-left: auto; color: var(--fg-2); font-size: 9px; }
+.preset-name { flex: 1; height: 26px; padding: 0 8px; border-radius: 4px; background: var(--bg-2); color: var(--fg-0); border: 1px solid var(--line); font: inherit; outline: none; }
+.preset-name:focus { border-color: var(--sig); }
+.preset-empty { color: var(--fg-2); padding: 6px 8px; }

@@ -4,6 +4,8 @@ import { createSource, inTauri } from "./engine/source";
 import { Grid } from "./layout/grid";
 import { MODULE_TITLES } from "./modules";
 import { applyDock } from "./dock";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { applyPresetState, capturePreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
 import { GRID_DIMS, layoutKindFor, resetLayout, saveLayout, saveSettings, settings, type DockMode } from "./state";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -100,7 +102,89 @@ buildDockPanel();
 dockBtn.addEventListener("click", (e) => { e.stopPropagation(); dockPanel.classList.toggle("hidden"); modulesPanel.classList.add("hidden"); });
 document.addEventListener("click", (e) => { if (!dockPanel.contains(e.target as Node)) dockPanel.classList.add("hidden"); });
 if (settings.dock !== "none") setDock(settings.dock);
-$("reset-loudness-btn").addEventListener("click", () => source.resetLoudness());
+
+// ---- presets (layout + settings + dock) -----------------------------------------
+const presetBtn = $<HTMLButtonElement>("preset-btn");
+const presetPanel = $("preset-panel");
+async function applyPreset(name: string, p: Preset) {
+  applyPresetState(p);
+  await setDock(p.dock);          // switches layout kind if needed
+  grid.sync();                    // same kind: re-place tiles with the new rects
+  buildModulesPanel();
+  await populateDevices().catch(() => {});
+  stState.textContent = `프리셋 적용: ${name}`; stState.className = "ok"; stateHoldUntil = performance.now() + 3000;
+  buildPresetPanel();
+}
+function buildPresetPanel() {
+  presetPanel.innerHTML = "";
+  const all = loadPresets();
+  const names = Object.keys(all).sort();
+  if (!names.length) {
+    const e = document.createElement("div"); e.className = "preset-empty"; e.textContent = "저장된 프리셋 없음";
+    presetPanel.appendChild(e);
+  }
+  names.forEach((name, i) => {
+    const row = document.createElement("div");
+    row.className = "preset-row";
+    const apply = document.createElement("button");
+    apply.className = "btn preset-apply";
+    const p = all[name];
+    const dockLabel = p.dock === "none" ? "일반" : ({ top: "위", bottom: "아래", left: "왼쪽", right: "오른쪽" } as Record<string, string>)[p.dock];
+    apply.innerHTML = `<span class="k">${i < 9 ? `Ctrl+${i + 1}` : ""}</span>${name}<span class="d">${dockLabel}</span>`;
+    apply.addEventListener("click", (e) => { e.stopPropagation(); presetPanel.classList.add("hidden"); applyPreset(name, p); });
+    const over = document.createElement("button");
+    over.className = "btn icon"; over.title = "현재 상태로 덮어쓰기"; over.textContent = "↻";
+    over.addEventListener("click", (e) => { e.stopPropagation(); storePreset(name); buildPresetPanel(); });
+    const del = document.createElement("button");
+    del.className = "btn icon"; del.title = "삭제"; del.textContent = "×";
+    del.addEventListener("click", (e) => { e.stopPropagation(); deletePreset(name); buildPresetPanel(); });
+    row.append(apply, over, del);
+    presetPanel.appendChild(row);
+  });
+  const sep = document.createElement("div"); sep.className = "ctx-sep"; presetPanel.appendChild(sep);
+  const saveRow = document.createElement("div");
+  saveRow.className = "preset-row";
+  const input = document.createElement("input");
+  input.type = "text"; input.placeholder = "이름 입력 후 저장"; input.className = "preset-name";
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") saveBtn.click(); });
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn on"; saveBtn.textContent = "현재 상태 저장";
+  saveBtn.addEventListener("click", (e) => { e.stopPropagation(); const n = input.value.trim(); if (!n) { input.focus(); return; } storePreset(n); buildPresetPanel(); });
+  saveRow.append(input, saveBtn);
+  presetPanel.appendChild(saveRow);
+  if (inTauri) {
+    const io = document.createElement("div");
+    io.className = "preset-row";
+    const exp = document.createElement("button"); exp.className = "btn"; exp.textContent = "내보내기 (JSON)";
+    exp.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const n = input.value.trim() || "preset";
+      const dst = await saveDialog({ title: "프리셋 내보내기", defaultPath: `${n}.rmpreset.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
+      if (dst) await source.writeText(dst, presetToJson(n, capturePreset()));
+    });
+    const imp = document.createElement("button"); imp.className = "btn"; imp.textContent = "가져오기…";
+    imp.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const r = await openDialog({ title: "프리셋 가져오기", multiple: false, filters: [{ name: "JSON", extensions: ["json"] }] });
+      const path = typeof r === "string" ? r : null;
+      if (!path) return;
+      try { const { name, preset } = presetFromJson(await source.readText(path)); storePreset(name, preset); buildPresetPanel(); }
+      catch (err) { stState.textContent = `가져오기 실패: ${String(err)}`; stState.className = "err"; }
+    });
+    io.append(exp, imp);
+    presetPanel.appendChild(io);
+  }
+}
+buildPresetPanel();
+presetBtn.addEventListener("click", (e) => { e.stopPropagation(); presetPanel.classList.toggle("hidden"); dockPanel.classList.add("hidden"); modulesPanel.classList.add("hidden"); });
+document.addEventListener("click", (e) => { if (!presetPanel.contains(e.target as Node)) presetPanel.classList.add("hidden"); });
+document.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey || e.key < "1" || e.key > "9") return;
+  const all = loadPresets(); const names = Object.keys(all).sort();
+  const name = names[Number(e.key) - 1];
+  if (name) { e.preventDefault(); applyPreset(name, all[name]); }
+});$("reset-loudness-btn").addEventListener("click", () => source.resetLoudness());
 
 // ---- recording ---------------------------------------------------------------
 const recBtn = $<HTMLButtonElement>("rec-btn");
