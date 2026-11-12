@@ -5,6 +5,8 @@
 import { ARTIC_KEYS, rowArtic, VOWEL_TARGETS, type Artic, type Body, type TargetRow } from "./vowelTargets";
 
 export const REST: Artic = { tbX: 2.4, tbY: 6.9, jaw: 0.35, lipAp: 0.6, lipProt: 0.1, lipWidth: 0.8, root: 0, larynx: 0, ttX: 6.0, ttY: 6.6, ttCurl: 0 };
+/** Mouth-breathing posture: jaw dropped, lips apart, tongue low and back. */
+export const BREATH_OPEN: Artic = { tbX: 2.0, tbY: 6.2, jaw: 1.0, lipAp: 1.5, lipProt: 0.05, lipWidth: 0.9, root: -0.3, larynx: -0.3, ttX: 5.8, ttY: 5.9, ttCurl: 0 };
 
 function dist(f1: number, f2: number, r: TargetRow): number {
   return Math.hypot(2.2 * Math.log(f1 / r[1]), Math.log(f2 / r[2]));
