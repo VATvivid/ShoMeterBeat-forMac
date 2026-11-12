@@ -301,6 +301,174 @@ fn read_text(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+// ---- windows: opacity, cross-window module drag, pop-out lifetime -------------------
+
+#[cfg(windows)]
+fn hwnd_of<W: raw_window_handle::HasWindowHandle>(w: &W) -> Option<isize> {
+    use raw_window_handle::RawWindowHandle;
+    match w.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+        _ => None,
+    }
+}
+
+/// Whole-window opacity 0–1 (WS_EX_LAYERED + LWA_ALPHA). 1.0 removes the layered style
+/// again so a fully opaque window pays no composition cost.
+#[tauri::command]
+fn set_opacity(window: tauri::Window, alpha: f32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+        let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")? as windows_sys::Win32::Foundation::HWND;
+        let a = alpha.clamp(0.0, 1.0);
+        unsafe {
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if a >= 0.995 {
+                SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_LAYERED as isize));
+            } else {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED as isize);
+                SetLayeredWindowAttributes(hwnd, 0, (a * 255.0).round() as u8, LWA_ALPHA);
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, alpha);
+        Err("이 OS에서는 지원하지 않습니다".into())
+    }
+}
+
+/// Payload sent to the window under the pointer while a tile is dragged across windows.
+#[derive(serde::Serialize, Clone)]
+struct XDrag {
+    module: String,
+    /// Pointer in the target window's CSS px (relative to its content area).
+    x: f64,
+    y: f64,
+    w: u32,
+    h: u32,
+    from: String,
+}
+
+/// Label of the last window that received an `rm://xdrag-over`.
+struct XDragState(parking_lot::Mutex<Option<String>>);
+
+fn screen_point(window: &tauri::Window, x: f64, y: f64) -> Result<(i32, i32), String> {
+    let p = window.inner_position().map_err(|e| e.to_string())?;
+    let s = window.scale_factor().map_err(|e| e.to_string())?;
+    Ok((p.x + (x * s).round() as i32, p.y + (y * s).round() as i32))
+}
+
+/// Our top-level window under a screen point (respects z-order), excluding `exclude`.
+fn window_at(app: &tauri::AppHandle, px: i32, py: i32, exclude: &str) -> Option<tauri::WebviewWindow> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetAncestor, WindowFromPoint, GA_ROOT};
+        let root = unsafe { GetAncestor(WindowFromPoint(windows_sys::Win32::Foundation::POINT { x: px, y: py }), GA_ROOT) } as isize;
+        if root == 0 {
+            return None;
+        }
+        app.webview_windows().into_values().find(|w| w.label() != exclude && hwnd_of(w) == Some(root))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, px, py, exclude);
+        None
+    }
+}
+
+fn xdrag_payload(target: &tauri::WebviewWindow, px: i32, py: i32, module: &str, w: u32, h: u32, from: &str) -> Option<XDrag> {
+    let tp = target.inner_position().ok()?;
+    let ts = target.scale_factor().ok()?;
+    Some(XDrag { module: module.to_string(), x: (px - tp.x) as f64 / ts, y: (py - tp.y) as f64 / ts, w, h, from: from.to_string() })
+}
+
+fn xdrag_leave_last(app: &tauri::AppHandle, st: &XDragState, keep: Option<&str>) {
+    use tauri::{Emitter, Manager};
+    let mut last = st.0.lock();
+    if let Some(l) = last.as_ref() {
+        if keep != Some(l.as_str()) {
+            if let Some(w) = app.webview_windows().get(l) {
+                let _ = w.emit("rm://xdrag-leave", ());
+            }
+            *last = None;
+        }
+    }
+}
+
+/// Pointer (CSS px of the calling window, may be outside it) moved while dragging a tile:
+/// tells the window under the pointer to show a drop ghost.
+#[tauri::command]
+fn drag_hover(app: tauri::AppHandle, window: tauri::Window, st: State<XDragState>, module: String, x: f64, y: f64, w: u32, h: u32) -> Result<(), String> {
+    use tauri::Emitter;
+    let (px, py) = screen_point(&window, x, y)?;
+    let target = window_at(&app, px, py, window.label());
+    xdrag_leave_last(&app, &st, target.as_ref().map(|t| t.label()));
+    if let Some(t) = target {
+        if let Some(p) = xdrag_payload(&t, px, py, &module, w, h, window.label()) {
+            let _ = t.emit("rm://xdrag-over", p);
+            *st.0.lock() = Some(t.label().to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn drag_leave(app: tauri::AppHandle, st: State<XDragState>) {
+    xdrag_leave_last(&app, &st, None);
+}
+
+/// Tile dropped outside its window: delivers it to the window under the pointer and
+/// returns that window's label, or `None` when the pointer is over no re-minimeter window
+/// (the caller then opens a new pop-out window there).
+#[tauri::command]
+fn drag_drop(app: tauri::AppHandle, window: tauri::Window, st: State<XDragState>, module: String, x: f64, y: f64, w: u32, h: u32) -> Result<Option<String>, String> {
+    use tauri::Emitter;
+    let (px, py) = screen_point(&window, x, y)?;
+    let target = window_at(&app, px, py, window.label());
+    xdrag_leave_last(&app, &st, None);
+    let Some(t) = target else { return Ok(None) };
+    let p = xdrag_payload(&t, px, py, &module, w, h, window.label()).ok_or("대상 창 위치를 읽지 못했습니다")?;
+    t.emit("rm://xdrag-drop", p).map_err(|e| e.to_string())?;
+    Ok(Some(t.label().to_string()))
+}
+
+/// Screen position (physical px) of a point given in the calling window's CSS px.
+#[tauri::command]
+fn to_screen(window: tauri::Window, x: f64, y: f64) -> Result<(i32, i32), String> {
+    screen_point(&window, x, y)
+}
+
+// ---- clip folder (drag-out to DAW) -------------------------------------------------
+
+/// Default folder for clips dragged out of the Waveform: `<Documents>\re-minimeter\clips`.
+#[tauri::command]
+fn default_clip_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let base = app.path().document_dir().or_else(|_| app.path().home_dir()).map_err(|e| e.to_string())?;
+    Ok(base.join("re-minimeter").join("clips").display().to_string())
+}
+
+#[tauri::command]
+fn ensure_dir(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+}
+
+/// Writes the drag preview image (app icon) to the temp folder and returns its path.
+#[tauri::command]
+fn clip_drag_icon() -> Result<String, String> {
+    let dir = std::env::temp_dir().join("re-minimeter");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let p = dir.join("drag-icon.png");
+    if !p.exists() {
+        std::fs::write(&p, include_bytes!("../icons/32x32.png")).map_err(|e| e.to_string())?;
+    }
+    Ok(p.display().to_string())
+}
+
 // ---- waveform history ----------------------------------------------------------
 
 /// Min/max envelope of the last `seconds` (see `audio/wave.rs` for the layout).
@@ -340,12 +508,22 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_drag::init())
         .manage(Engine(shared))
+        .manage(XDragState(parking_lot::Mutex::new(None)))
+        // Closing the main window ends the app even when pop-out windows are open.
+        .on_window_event(|w, e| {
+            if w.label() == "main" && matches!(e, tauri::WindowEvent::Destroyed) {
+                use tauri::Manager;
+                w.app_handle().exit(0);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
-            events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status
+            events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status,
+            set_opacity, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");

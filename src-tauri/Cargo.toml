@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-drag = "2"
+raw-window-handle = "0.6"
 hound = "3"
 ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "ndarray"] }
 whisper-rs = { version = "0.16", optional = true }
@@ -29,6 +31,9 @@ ebur128 = "0.1"
 parking_lot = "0.12"
 log = "0.4"
 env_logger = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 default = []

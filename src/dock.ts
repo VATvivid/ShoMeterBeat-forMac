@@ -20,7 +20,7 @@ export async function applyDock(mode: DockMode) {
   if (!inTauri) return;
   const { api, w } = await win();
   if (mode === "none") {
-    await w.setAlwaysOnTop(false);
+    await w.setAlwaysOnTop(settings.alwaysOnTop);
     await w.setDecorations(true);
     try {
       const s = JSON.parse(localStorage.getItem(SAVED_KEY) || "null") as Saved | null;

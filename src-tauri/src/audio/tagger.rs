@@ -92,10 +92,17 @@ impl TaggerState {
 
     /// Feed interleaved stereo at `sr_in`; keeps a 16 kHz mono history.
     pub fn feed(&mut self, stereo: &[f32], sr_in: u32) {
+        // Time base = frames since capture start (same clock as the waveform history),
+        // counted even while tagging is off so tag times line up with the Waveform.
+        self.frames_in += (stereo.len() / 2) as u64;
+        if self.sr_in != sr_in {
+            self.sr_in = sr_in;
+            self.fir.clear();
+        }
         if !self.enabled {
             return;
         }
-        if self.sr_in != sr_in || self.fir.is_empty() {
+        if self.fir.is_empty() {
             self.design_fir(sr_in);
         }
         let step = sr_in as f64 / MODEL_SR as f64;
@@ -106,7 +113,6 @@ impl TaggerState {
             if self.hist.len() > n {
                 self.hist.pop_front();
             }
-            self.frames_in += 1;
             // low-passed value at this input sample
             let mut y = 0.0f32;
             for (k, h) in self.fir.iter().enumerate() {

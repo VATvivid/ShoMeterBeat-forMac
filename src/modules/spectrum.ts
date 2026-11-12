@@ -13,6 +13,17 @@ const FREQ_TICKS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
 /** Saved reference spectra (average dB per log point), keyed by preset name. */
 type RefPresets = Record<string, number[]>;
 
+/** Colour presets: line + fill (vertical or along frequency) + peak hold, all from theme tokens. */
+interface ColorPreset { label: string; line: string; hold: string; fill: { dir: "v" | "h"; stops: [number, string, number][] }; glow?: boolean }
+const COLOR_PRESETS: Record<string, ColorPreset> = {
+  default: { label: "기본 (틸)", line: "sig", hold: "peak", fill: { dir: "v", stops: [[0, "sig", 0.45], [1, "sig", 0]] } },
+  fire: { label: "불꽃", line: "target", hold: "fg-0", fill: { dir: "v", stops: [[0, "target", 0.8], [0.45, "peak", 0.6], [1, "clip", 0.1]] } },
+  aurora: { label: "오로라", line: "sig", hold: "fg-0", fill: { dir: "h", stops: [[0, "sig", 0.55], [0.5, "sig-2", 0.5], [1, "map-1", 0.6]] } },
+  rainbow: { label: "무지개", line: "fg-0", hold: "fg-1", fill: { dir: "h", stops: [[0, "clip", 0.6], [0.2, "peak", 0.6], [0.4, "target", 0.6], [0.6, "sig", 0.6], [0.8, "sig-2", 0.6], [1, "map-1", 0.7]] } },
+  ice: { label: "아이스", line: "fg-0", hold: "sig-2", fill: { dir: "v", stops: [[0, "fg-0", 0.55], [0.5, "sig-2", 0.4], [1, "sig-2", 0]] } },
+  neon: { label: "네온", line: "clip", hold: "target", fill: { dir: "v", stops: [[0, "clip", 0.35], [1, "map-1", 0.05]] }, glow: true },
+};
+
 export class SpectrumModule implements Module {
   readonly id = "spectrum";
   readonly title = "Spectrum";
@@ -29,6 +40,7 @@ export class SpectrumModule implements Module {
   private get presets(): RefPresets { return modSetting<RefPresets>(this.id, "refs", {}); }
   private get refName(): string { return modSetting(this.id, "ref", ""); }
   private get autoLevel() { return modSetting(this.id, "refAuto", true); }
+  private get colors(): ColorPreset { return COLOR_PRESETS[modSetting(this.id, "colors", "default")] ?? COLOR_PRESETS.default; }
 
   settings(): SettingItem[] {
     const names = Object.keys(this.presets);
@@ -36,6 +48,7 @@ export class SpectrumModule implements Module {
       { type: "select", label: "기울기", value: String(this.slope), options: [0, 3, 4.5, 6].map((v) => ({ value: String(v), label: v === 0 ? "0 dB/oct (평탄)" : `+${v} dB/oct` })), onChange: (v) => setModSetting(this.id, "slope", Number(v)) },
       { type: "select", label: "dB 범위", value: String(this.range), options: [60, 72, 96, 120].map((v) => ({ value: String(v), label: `${v} dB` })), onChange: (v) => setModSetting(this.id, "range", Number(v)) },
       { type: "toggle", label: "피크 홀드", value: this.showHold, onChange: (v) => setModSetting(this.id, "hold", v) },
+      { type: "select", label: "색상", value: modSetting(this.id, "colors", "default"), options: Object.entries(COLOR_PRESETS).map(([k, p]) => ({ value: k, label: p.label })), onChange: (v) => setModSetting(this.id, "colors", v) },
       { type: "select", label: "레퍼런스", value: names.includes(this.refName) ? this.refName : "", options: [{ value: "", label: "없음" }, ...names.map((n) => ({ value: n, label: n }))], onChange: (v) => setModSetting(this.id, "ref", v) },
       { type: "toggle", label: "레퍼런스 레벨 자동 맞춤", value: this.autoLevel, onChange: (v) => setModSetting(this.id, "refAuto", v) },
       { type: "action", label: "레퍼런스 추가… (파일 선택 또는 타일에 드롭)", onClick: () => this.addReference() },
@@ -153,11 +166,11 @@ export class SpectrumModule implements Module {
       ctx.fillText(`ref: ${this.refName}${this.autoLevel ? ` (${offset >= 0 ? "+" : ""}${offset.toFixed(1)} dB)` : ""}`, x1 - 2, y0 + 2);
     }
 
-    // Fill + line
-    const sig = theme("sig");
-    const grad = ctx.createLinearGradient(0, y0, 0, y1);
-    grad.addColorStop(0, withAlpha(sig, 0.45));
-    grad.addColorStop(1, withAlpha(sig, 0));
+    // Fill + line (colour preset)
+    const cp = this.colors;
+    const sig = theme(cp.line);
+    const grad = cp.fill.dir === "v" ? ctx.createLinearGradient(0, y0, 0, y1) : ctx.createLinearGradient(x0, 0, x1, 0);
+    for (const [pos, tok, a] of cp.fill.stops) grad.addColorStop(pos, withAlpha(theme(tok), a));
     ctx.beginPath();
     ctx.moveTo(xOf(0), y1);
     for (let i = 0; i < N_SPEC; i++) ctx.lineTo(xOf(i), yOf(this.smooth[i]));
@@ -170,13 +183,15 @@ export class SpectrumModule implements Module {
     ctx.strokeStyle = sig;
     ctx.lineWidth = 1.5;
     ctx.lineJoin = "round";
+    if (cp.glow) { ctx.shadowColor = sig; ctx.shadowBlur = 10; }
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
     // Peak hold
     if (this.showHold) {
       ctx.beginPath();
       for (let i = 0; i < N_SPEC; i++) { const x = xOf(i), y = yOf(this.hold[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-      ctx.strokeStyle = withAlpha(theme("peak"), 0.8);
+      ctx.strokeStyle = withAlpha(theme(cp.hold), 0.8);
       ctx.lineWidth = 1;
       ctx.stroke();
     }

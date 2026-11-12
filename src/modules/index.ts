@@ -15,6 +15,7 @@ import { StereoBandsModule } from "./stereobands";
 import { PlayerModule } from "./player";
 import { VariationMapModule } from "./variationmap";
 import { SubtitlesModule } from "./subtitles";
+import { EmojiModule } from "./emoji";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -35,6 +36,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   player: () => new PlayerModule(),
   variation: () => new VariationMapModule(),
   subtitles: () => new SubtitlesModule(),
+  emoji: () => new EmojiModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -54,12 +56,13 @@ export const MODULE_TITLES: Record<string, string> = {
   player: "Player (파일 재생 · 분석)",
   variation: "Variation Map (베리에이션 · 반복 감지)",
   subtitles: "Subtitles (자막 · whisper)",
+  emoji: "Emoji (도트 · 재미용)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */
 export function minSize(id: string, kind: LayoutKind): { w: number; h: number } {
   if (kind === "dockh") return { w: id === "levels" ? 1 : 2, h: 1 };
   if (kind === "dockv") return { w: 1, h: 2 };
-  if (id === "levels" || id === "dynamics") return { w: 2, h: 3 };
+  if (id === "levels" || id === "dynamics" || id === "emoji") return { w: 2, h: 3 };
   return { w: 3, h: 3 };
 }

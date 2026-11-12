@@ -2,14 +2,17 @@
 // on the layout kind: free grid, horizontal strip, vertical strip). In edit mode the
 // header drags (move) and the bottom-right handle resizes. Overlapping tiles are
 // pushed out of the way (down in the free grid / vertical strip, right in the
-// horizontal strip); the grid grows when needed. While dragging nothing moves —
-// dashed guides show where pushed tiles will land; they glide there on drop.
+// horizontal strip); the grid grows when needed — the free grid in both directions,
+// so a tile dragged past the right edge extends the grid by its own width (the window
+// stays, cells shrink). While dragging nothing moves — dashed guides show where pushed
+// tiles will land; they glide there on drop.
+// A tile dragged out of the window is handed to `onXDrag` (cross-window move).
 // Right-click opens the module's settings menu.
 import type { Frame } from "../engine/frame";
 import { minSize, MODULES } from "../modules";
 import type { Module } from "../modules/types";
 import { effectiveDims, GRID_DIMS, layouts, saveLayout, type Layout, type LayoutKind } from "../state";
-import { showContextMenu } from "./contextmenu";
+import { showContextMenu, type MenuAction } from "./contextmenu";
 
 interface Tile {
   id: string;
@@ -23,18 +26,27 @@ interface Tile {
 
 const GUTTER = 6;
 
-type Rect = { x: number; y: number; w: number; h: number };
+export type Rect = { x: number; y: number; w: number; h: number };
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** Hooks for moving a tile to another window (see windows.ts). Points are CSS px of this window's viewport. */
+export interface XDragHooks {
+  hover(id: string, rect: Rect, clientX: number, clientY: number): void;
+  leave(): void;
+  /** Resolves true when another window took the module (it is then switched off here). */
+  drop(id: string, rect: Rect, tilePx: { w: number; h: number }, clientX: number, clientY: number): Promise<boolean>;
+}
 
 /**
  * Places `movingId` at `target` and pushes every colliding tile out of the way.
  * Direction is decided by which side the mover comes from: a tile whose centre is to
  * the right of the mover is pushed right, one to the left is pushed left — when that
- * fits in the grid. Otherwise it goes down (free grid / vertical strip) or right
- * (horizontal strip), growing the grid. Cascades until stable.
+ * fits in the grid (the free grid counts as wide as the mover makes it). Otherwise it
+ * goes down (free grid / vertical strip) or right (horizontal strip), growing the grid.
+ * Cascades until stable.
  */
 export function resolvePush(layout: Layout, movingId: string, target: Rect, kind: LayoutKind): Record<string, Rect> {
-  const { cols } = GRID_DIMS[kind];
+  const cols = kind === "normal" ? Math.max(GRID_DIMS.normal.cols, target.x + target.w) : GRID_DIMS[kind].cols;
   const out: Record<string, Rect> = {};
   for (const [id, r] of Object.entries(layout)) if (r.on) out[id] = { x: r.x, y: r.y, w: r.w, h: r.h };
   out[movingId] = { ...target };
@@ -84,10 +96,13 @@ export class Grid {
   get isEditing() { return this.editing; }
   get layoutKind() { return this.kind; }
   get layout(): Layout { return layouts[this.kind]; }
+  /** Ids of the modules currently shown. */
+  get activeIds(): string[] { return [...this.tiles.keys()]; }
 
   setEditing(on: boolean) {
     this.editing = on;
     this.root.classList.toggle("editing", on);
+    document.body.classList.toggle("editing", on);
   }
 
   /** Switch layout family (normal / dockh / dockv) and rebuild tiles. */
@@ -122,6 +137,13 @@ export class Grid {
   private rectPx(r: Rect) {
     const { cw, ch } = this.cell();
     return { left: r.x * (cw + GUTTER), top: r.y * (ch + GUTTER), width: r.w * cw + (r.w - 1) * GUTTER, height: r.h * ch + (r.h - 1) * GUTTER };
+  }
+
+  /** Grid cell under a viewport point (may be outside the grid: not clamped). */
+  cellAt(clientX: number, clientY: number): { x: number; y: number } {
+    const r = this.root.getBoundingClientRect();
+    const { cw, ch } = this.cell();
+    return { x: Math.floor((clientX - r.left) / (cw + GUTTER)), y: Math.floor((clientY - r.top) / (ch + GUTTER)) };
   }
 
   relayout() {
@@ -217,9 +239,11 @@ export class Grid {
 
   private openMenu(id: string, module: Module, x: number, y: number) {
     const items = module.settings?.() ?? [];
+    const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
-      { label: "모듈 끄기", danger: true, onClick: () => { this.layout[id].on = false; saveLayout(this.kind); this.sync(); this.onChange?.(); } },
+      ...extra,
+      { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
   }
 
@@ -232,6 +256,58 @@ export class Grid {
 
   onChange: (() => void) | null = null;
   onToggleEdit: (() => void) | null = null;
+  /** Extra rows for a tile's context menu (e.g. "별도 창으로 보내기"). */
+  extraMenu: ((id: string) => MenuAction[]) | null = null;
+  onXDrag: XDragHooks | null = null;
+
+  /** Switch a module off in this window. */
+  remove(id: string) {
+    if (!this.layout[id]) return;
+    this.layout[id].on = false;
+    saveLayout(this.kind);
+    this.sync();
+    this.onChange?.();
+  }
+
+  /**
+   * Switch a module on, `w`×`h` cells, at the cell under a viewport point (centred on
+   * it) or appended after everything else when no point is given. Colliding tiles are
+   * pushed like in a drag.
+   */
+  add(id: string, w: number, h: number, clientX?: number, clientY?: number) {
+    if (!MODULES[id]) return;
+    const min = minSize(id, this.kind);
+    const size = this.kind === "dockh" ? { w: Math.max(min.w, w), h: 1 } : this.kind === "dockv" ? { w: 1, h: Math.max(min.h, h) } : { w: Math.max(min.w, w), h: Math.max(min.h, h) };
+    let target: Rect;
+    if (clientX !== undefined && clientY !== undefined) {
+      const c = this.cellAt(clientX, clientY);
+      target = { x: Math.max(0, c.x - Math.floor(size.w / 2)), y: Math.max(0, c.y - Math.floor(size.h / 2)), ...size };
+      if (this.kind === "dockh") target.y = 0;
+      if (this.kind === "dockv") target.x = 0;
+    } else {
+      const d = this.dims();
+      target = this.kind === "dockh" ? { x: d.cols, y: 0, ...size } : { x: 0, y: d.rows, ...size };
+    }
+    this.layout[id] = { ...target, on: true };
+    const resolved = resolvePush(this.layout, id, target, this.kind);
+    for (const [oid, r] of Object.entries(resolved)) Object.assign(this.layout[oid], r);
+    saveLayout(this.kind);
+    this.root.classList.add("settling");
+    this.sync();
+    setTimeout(() => this.root.classList.remove("settling"), 220);
+    this.onChange?.();
+  }
+
+  /** Drop ghost for a tile being dragged in from another window (null hides it). */
+  setExternalGhost(g: { w: number; h: number; clientX: number; clientY: number } | null) {
+    if (!g) { this.ghost.style.display = "none"; return; }
+    const c = this.cellAt(g.clientX, g.clientY);
+    const r: Rect = { x: Math.max(0, c.x - Math.floor(g.w / 2)), y: Math.max(0, c.y - Math.floor(g.h / 2)), w: g.w, h: g.h };
+    if (this.kind === "dockh") { r.y = 0; r.h = 1; }
+    if (this.kind === "dockv") { r.x = 0; r.w = 1; }
+    const p = this.rectPx(r);
+    Object.assign(this.ghost.style, { display: "block", left: `${p.left}px`, top: `${p.top}px`, width: `${p.width}px`, height: `${p.height}px` });
+  }
 
   /** Tile element under a point (CSS px, viewport coords), if any. */
   tileAt(x: number, y: number): { id: string; el: HTMLElement } | null {
@@ -264,16 +340,18 @@ export class Grid {
       target.setPointerCapture(e.pointerId);
       const start = { ...this.layout[t.id] };
       const { cw, ch } = this.cell();
-      const base = GRID_DIMS[this.kind];
-      // Movement bounds: fixed along the non-growing axis, open along the growing one.
-      const maxX = this.kind === "dockh" ? Infinity : base.cols;
-      const maxY = this.kind === "dockh" ? base.rows : Infinity;
+      // Movement bounds: fixed along a strip's thin axis, open along every growing one.
+      const maxX = this.kind === "dockv" ? 1 : Infinity;
+      const maxY = this.kind === "dockh" ? 1 : Infinity;
       const min = minSize(t.id, this.kind);
       const sx = e.clientX, sy = e.clientY;
       let next: Rect = { ...start };
+      let outside = false;       // pointer left this window (cross-window move)
+      let lastHover = 0;
       t.el.classList.add("dragging");
       t.el.style.zIndex = String(++this.z);
       this.ghost.style.display = "block";
+      const isOutside = (ev: PointerEvent) => mode === "move" && !!this.onXDrag && (ev.clientX < 0 || ev.clientY < 0 || ev.clientX > window.innerWidth || ev.clientY > window.innerHeight);
       const update = (ev: PointerEvent) => {
         const dx = Math.round((ev.clientX - sx) / (cw + GUTTER));
         const dy = Math.round((ev.clientY - sy) / (ch + GUTTER));
@@ -285,6 +363,16 @@ export class Grid {
         } else {
           next = { ...start, w: Math.max(min.w, Math.min(maxX - start.x, start.w + dx)), h: Math.max(min.h, Math.min(maxY - start.y, start.h + dy)) };
         }
+        const out = isOutside(ev);
+        if (out) {
+          // Outside this window: no local preview; tell the window under the pointer (20 Hz).
+          if (!outside) { this.ghost.style.display = "none"; this.hideGuides(); this.preview = null; }
+          outside = true;
+          const now = performance.now();
+          if (now - lastHover > 50) { lastHover = now; this.onXDrag!.hover(t.id, start, ev.clientX, ev.clientY); }
+          return;
+        }
+        if (outside) { outside = false; this.ghost.style.display = "block"; this.onXDrag?.leave(); }
         const resolved = resolvePush(this.layout, t.id, next, this.kind);
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
@@ -292,7 +380,7 @@ export class Grid {
         this.preview = resolved;
         if (mode === "resize") this.place(t, next);
       };
-      const finish = (ev: PointerEvent) => {
+      const finish = async (ev: PointerEvent) => {
         target.removeEventListener("pointermove", update);
         target.removeEventListener("pointerup", finish);
         target.removeEventListener("pointercancel", finish);
@@ -300,6 +388,17 @@ export class Grid {
         t.el.classList.remove("dragging");
         this.ghost.style.display = "none";
         this.hideGuides();
+        if (outside && ev.type === "pointerup") {
+          // Dropped outside this window: hand the module to the window under the pointer.
+          this.preview = null;
+          const px = { w: t.el.clientWidth, h: t.el.clientHeight };
+          this.place(t);
+          let taken = false;
+          try { taken = await this.onXDrag!.drop(t.id, start, px, ev.clientX, ev.clientY); } catch (err) { console.error(err); }
+          if (taken) this.remove(t.id);
+          return;
+        }
+        if (outside) { this.onXDrag?.leave(); this.preview = null; this.place(t); return; }
         const resolved = this.preview ?? resolvePush(this.layout, t.id, next, this.kind);
         this.preview = null;
         for (const [id, r] of Object.entries(resolved)) Object.assign(this.layout[id], r);

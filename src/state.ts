@@ -1,8 +1,14 @@
 // Persisted settings and layouts (localStorage inside the Tauri webview).
+// Every window (main + pop-outs) runs its own copy of this module; settings are shared
+// through localStorage and kept in sync with the `storage` event, layouts are per window.
 import type { LevelMode } from "./modules/levels";
 
 export interface TileRect { x: number; y: number; w: number; h: number; on: boolean }
 export type Layout = Record<string, TileRect>;
+
+/** Window label: "main" or "pop-<id>" for a pop-out window (from the page URL). */
+export const WIN_LABEL = (() => { try { return new URLSearchParams(location.search).get("win") || "main"; } catch { return "main"; } })();
+export const IS_POP = WIN_LABEL !== "main";
 
 /** Window arrangement: free grid, or docked to a screen edge as one strip. */
 export type DockMode = "none" | "top" | "bottom" | "left" | "right";
@@ -10,9 +16,11 @@ export type DockMode = "none" | "top" | "bottom" | "left" | "right";
 export type LayoutKind = "normal" | "dockh" | "dockv";
 
 /** Base grid size per layout kind. The grid grows beyond this when tiles need the room
- *  (rows for normal/dockv, columns for dockh) and shrinks back when they fit again. */
+ *  (columns and rows in the free grid, columns in the horizontal strip, rows in the
+ *  vertical strip) and shrinks back when they fit again. A pop-out window has no base
+ *  size: its grid is exactly the tiles' extent, so modules fill the window. */
 export const GRID_DIMS: Record<LayoutKind, { cols: number; rows: number }> = {
-  normal: { cols: 24, rows: 16 },
+  normal: IS_POP ? { cols: 1, rows: 1 } : { cols: 24, rows: 16 },
   dockh: { cols: 24, rows: 1 },
   dockv: { cols: 1, rows: 24 },
 };
@@ -22,8 +30,8 @@ export function effectiveDims(kind: LayoutKind, rects: Iterable<{ x: number; y: 
   const base = GRID_DIMS[kind];
   let cols = base.cols, rows = base.rows;
   for (const r of rects) {
-    if (kind === "dockh") cols = Math.max(cols, r.x + r.w);
-    else rows = Math.max(rows, r.y + r.h);
+    if (kind !== "dockv") cols = Math.max(cols, r.x + r.w);
+    if (kind !== "dockh") rows = Math.max(rows, r.y + r.h);
   }
   return { cols, rows };
 }
@@ -38,31 +46,41 @@ export interface Settings {
   dock: DockMode;
   /** Strip thickness in px when docked (height for top/bottom, width for left/right). */
   dockSize: number;
+  /** Main window opacity 0–100 (pop-outs keep their own in the pop-out list). */
+  opacity: number;
+  /** Main window always-on-top (independent of dock mode, which forces it). */
+  alwaysOnTop: boolean;
   /** Per-module free-form settings, keyed by module id. */
   modules: Record<string, Record<string, unknown>>;
 }
 
 const SETTINGS_KEY = "rm.settings.v3";
-const LAYOUT_KEYS: Record<LayoutKind, string> = { normal: "rm.layout.v2", dockh: "rm.layout.dockh.v1", dockv: "rm.layout.dockv.v1" };
+export const popLayoutKey = (label: string) => `rm.layout.pop.${label}.v1`;
+const LAYOUT_KEYS: Record<LayoutKind, string> = {
+  normal: IS_POP ? popLayoutKey(WIN_LABEL) : "rm.layout.v2",
+  dockh: "rm.layout.dockh.v1",
+  dockv: "rm.layout.dockv.v1",
+};
 
 export function layoutKindFor(dock: DockMode): LayoutKind {
   return dock === "none" ? "normal" : dock === "top" || dock === "bottom" ? "dockh" : "dockv";
 }
 
-/** DESIGN.md §5 default arrangements. */
+/** DESIGN.md §5 default arrangements. A pop-out starts empty (its modules are written by the window that opens it). */
 export function defaultLayout(kind: LayoutKind): Layout {
+  if (kind === "normal" && IS_POP) return {};
   if (kind === "dockh") {
     const row = (x: number, w: number) => ({ x, y: 0, w, h: 1, on: true });
     return {
       spectrum: row(0, 8), loudness: row(8, 5), levels: row(13, 2), stereo: row(15, 3), scope: row(18, 3), spectrogram: row(21, 3),
-      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false }, player: { x: 0, y: 0, w: 6, h: 1, on: false }, variation: { x: 0, y: 0, w: 5, h: 1, on: false }, subtitles: { x: 0, y: 0, w: 6, h: 1, on: false },
+      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false }, player: { x: 0, y: 0, w: 6, h: 1, on: false }, variation: { x: 0, y: 0, w: 5, h: 1, on: false }, subtitles: { x: 0, y: 0, w: 6, h: 1, on: false }, emoji: { x: 0, y: 0, w: 2, h: 1, on: false },
     };
   }
   if (kind === "dockv") {
     const col = (y: number, h: number) => ({ x: 0, y, w: 1, h, on: true });
     return {
       spectrum: col(0, 6), loudness: col(6, 6), levels: col(12, 4), stereo: col(16, 4), scope: col(20, 4),
-      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false }, variation: { x: 0, y: 0, w: 1, h: 5, on: false }, subtitles: { x: 0, y: 0, w: 1, h: 4, on: false },
+      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false }, variation: { x: 0, y: 0, w: 1, h: 5, on: false }, subtitles: { x: 0, y: 0, w: 1, h: 4, on: false }, emoji: { x: 0, y: 0, w: 1, h: 3, on: false },
     };
   }
   return {
@@ -82,6 +100,7 @@ export function defaultLayout(kind: LayoutKind): Layout {
     player: { x: 0, y: 23, w: 12, h: 7, on: true },
     variation: { x: 12, y: 23, w: 12, h: 7, on: true },
     subtitles: { x: 0, y: 30, w: 12, h: 5, on: false },
+    emoji: { x: 12, y: 30, w: 4, h: 5, on: false },
   };
 }
 
@@ -96,7 +115,7 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export const settings: Settings = load(SETTINGS_KEY, {
-  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, modules: {},
+  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, opacity: 100, alwaysOnTop: false, modules: {},
 });
 if (!settings.modules || typeof settings.modules !== "object") settings.modules = {};
 
@@ -131,3 +150,22 @@ export function setModSetting(id: string, key: string, value: unknown) {
   (settings.modules[id] ??= {})[key] = value;
   saveSettings();
 }
+
+/** Listeners for settings changed by another window (see the `storage` sync below). */
+const settingsListeners: (() => void)[] = [];
+export function onSettingsSynced(fn: () => void) { settingsListeners.push(fn); }
+
+// Another window of this app wrote the shared settings: take them over in place so the
+// modules (which read `settings` live) and the toolbar see the change, and this window's
+// next save doesn't clobber it with a stale copy.
+try {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== SETTINGS_KEY || !e.newValue) return;
+    try {
+      const s = JSON.parse(e.newValue) as Partial<Settings>;
+      Object.assign(settings, s);
+      if (!settings.modules || typeof settings.modules !== "object") settings.modules = {};
+      for (const fn of settingsListeners) fn();
+    } catch { /* ignore */ }
+  });
+} catch { /* no window (tests) */ }
