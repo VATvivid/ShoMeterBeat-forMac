@@ -12,9 +12,32 @@ function dist(f1: number, f2: number, r: TargetRow): number {
   return Math.hypot(2.2 * Math.log(f1 / r[1]), Math.log(f2 / r[2]));
 }
 
-/** Blend of the 4 nearest calibrated vowels, weight 1/(d+0.02)^3. */
-export function articForFormants(f1: number, f2: number, body: Body): { artic: Artic; ipa: string; d: number } {
-  const rows = VOWEL_TARGETS[body];
+/** Vowel sets for the blend. "common" drops front-rounded/central vowels that neither
+ *  English nor Korean uses (they otherwise attract low-F1 estimates). */
+export type VowelSet = "common" | "all";
+const UNCOMMON = new Set(["y", "ø", "œ", "ɨ"]);
+
+const stats = new Map<string, { mean: Artic; lo: Artic; hi: Artic }>();
+function tableStats(body: Body, set: VowelSet) {
+  const key = body + set;
+  let s = stats.get(key);
+  if (s) return s;
+  const rows = VOWEL_TARGETS[body].filter((r) => set === "all" || !UNCOMMON.has(r[0]));
+  const mean = {} as Artic, lo = {} as Artic, hi = {} as Artic;
+  for (const k of ARTIC_KEYS) {
+    const vals = rows.map((r) => rowArtic(r)[k]);
+    mean[k] = vals.reduce((a, b) => a + b, 0) / vals.length;
+    lo[k] = Math.min(...vals); hi[k] = Math.max(...vals);
+  }
+  s = { mean, lo, hi };
+  stats.set(key, s);
+  return s;
+}
+
+/** Blend of the 4 nearest calibrated vowels (weight 1/(d+0.02)^3), then the deviation
+ *  from the table mean scaled by `gain` (expressiveness), clamped near the table range. */
+export function articForFormants(f1: number, f2: number, body: Body, set: VowelSet = "common", gain = 1): { artic: Artic; ipa: string; d: number } {
+  const rows = VOWEL_TARGETS[body].filter((r) => set === "all" || !UNCOMMON.has(r[0]));
   const scored = rows.map((r) => ({ r, d: dist(f1, f2, r) })).sort((a, b) => a.d - b.d).slice(0, 4);
   const out = {} as Artic;
   for (const k of ARTIC_KEYS) out[k] = 0;
@@ -25,7 +48,12 @@ export function articForFormants(f1: number, f2: number, body: Body): { artic: A
     for (const k of ARTIC_KEYS) out[k] += a[k] * w;
     wsum += w;
   }
-  for (const k of ARTIC_KEYS) out[k] /= wsum;
+  const { mean, lo, hi } = tableStats(body, set);
+  for (const k of ARTIC_KEYS) {
+    const v = out[k] / wsum;
+    const span = hi[k] - lo[k];
+    out[k] = Math.max(lo[k] - span * 0.12, Math.min(hi[k] + span * 0.12, mean[k] + (v - mean[k]) * gain));
+  }
   return { artic: out, ipa: scored[0].r[0], d: scored[0].d };
 }
 

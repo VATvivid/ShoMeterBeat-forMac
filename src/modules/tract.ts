@@ -2,7 +2,8 @@ import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { Median, setVoiceType, VOICE_LABELS, voiceType, type VoiceType } from "./vowels";
-import { articForFormants, BREATH_OPEN, lerpArtic, REST } from "./articulation";
+import { articForFormants, BREATH_OPEN, lerpArtic, REST, type VowelSet } from "./articulation";
+import { modSetting, setModSetting } from "../state";
 import type { Artic } from "./vowelTargets";
 
 // Midsagittal vocal tract (face looks right) in body centimetres: origin at the
@@ -42,14 +43,21 @@ export class TractModule implements Module {
   private echoes: Echo[] = [];
   private lastEcho = 0;
   private gaze = { x: 0, y: 0, tx: 0, ty: 0, next: 2, lid: 0, blinkAt: 4 };
-  private m1 = new Median(5);
-  private m2 = new Median(5);
+  private m1 = new Median(3);
+  private m2 = new Median(3);
   private f1 = 0; private f2 = 0;
   private ipa = "";
+
+  private get gain() { return modSetting(this.id, "gain", 1.3); }
+  private get vowelSet(): VowelSet { return modSetting<VowelSet>(this.id, "set", "common"); }
+  private get speed() { return modSetting(this.id, "speed", 12); }
 
   settings(): SettingItem[] {
     return [
       { type: "select", label: "음성 유형", value: voiceType(), options: (Object.keys(VOICE_LABELS) as VoiceType[]).map((k) => ({ value: k, label: VOICE_LABELS[k] })), onChange: (v) => setVoiceType(v as VoiceType) },
+      { type: "range", label: "표현 강도", value: this.gain, min: 0.6, max: 2.0, step: 0.1, format: (v) => `×${v.toFixed(1)}`, onChange: (v) => setModSetting(this.id, "gain", v) },
+      { type: "range", label: "반응 속도", value: this.speed, min: 4, max: 24, step: 1, format: (v) => `${v}`, onChange: (v) => setModSetting(this.id, "speed", v) },
+      { type: "select", label: "모음 집합", value: this.vowelSet, options: [{ value: "common", label: "영어·한국어 (18)" }, { value: "all", label: "전체 IPA (22)" }], onChange: (v) => setModSetting(this.id, "set", v) },
     ];
   }
 
@@ -73,14 +81,14 @@ export class TractModule implements Module {
     const body = voiceType();
     const live = f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0;
     if (live) { this.f1 = this.m1.push(f.f1); this.f2 = this.m2.push(f.f2); }
-    const k = Math.min(1, dt * 10);
+    const k = Math.min(1, dt * this.speed);
     const lvl = Math.min(1, Math.max(0, (f.lufsM + 50) / 40));
     this.level += (lvl - this.level) * k;
     this.voice += ((live ? f.voiced : 0) - this.voice) * k;
 
     // ---- articulation target: calibrated vowel blend, or rest when silent
     if (live) {
-      const a = articForFormants(this.f1, this.f2, body);
+      const a = articForFormants(this.f1, this.f2, body, this.vowelSet, this.gain);
       this.ipa = a.ipa;
       this.artic = lerpArtic(this.artic, a.artic, k);
       this.larynxRise += (Math.max(-0.5, Math.min(1, Math.log2(Math.max(50, f.f0) / 150))) * 0.45 - this.larynxRise) * k;

@@ -129,9 +129,11 @@ impl VoiceAnalyzer {
         let mut f = [0.0f32; 3];
         let mut last = 0.0f32;
         let mut idx = 0;
+        // F1 can't sit on the first harmonics: keep it above ~1.2·f0 (and 210 Hz).
+        let f1_lo = if out.f0 > 0.0 { (1.2 * out.f0).max(210.0) } else { 210.0 };
         for (hz, _) in peaks {
             let (lo, hi) = match idx {
-                0 => (180.0, 1400.0),
+                0 => (f1_lo, 1400.0),
                 1 => (500.0, 3700.0),
                 _ => (1400.0, 4900.0),
             };
