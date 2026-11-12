@@ -7,7 +7,8 @@ import { modSetting, setModSetting } from "../state";
 
 // Transient / onset detector with tempo estimate.
 // Onset detection function: the engine's 10 ms spectral flux (sum of positive
-// log-magnitude increases), minus its 1 s local mean, half-wave rectified.
+// log-magnitude increases), minus its centred 1 s mean (±0.5 s → 0.5 s latency),
+// half-wave rectified. A trailing mean biases the tempogram toward fast tempos.
 // Tempo: autocorrelation of 6 s segments accumulated over time (decay 0.85 every 2 s)
 // → harmonic summation (lag, 2·lag, 3·lag, 4·lag) → tempo prior centred at 110 BPM →
 // parabolic interpolation → continuity (a new tempo must repeat before it is adopted).
@@ -29,7 +30,6 @@ export class TransientModule implements Module {
   private onsets: number[] = [];
   private od: number[] = [];      // onset detection function, absolute index = odStart + i
   private odStart = 0;
-  private fluxHist: number[] = []; // raw flux for the local mean
   private acc = new Float32Array(ACF_LEN);
   private lastAccAt = 0;           // absolute column index of the last accumulation
   private lastAbs = 0;
@@ -70,17 +70,17 @@ export class TransientModule implements Module {
     const absLast = Math.floor(o.head / colFrames);
     const absFirst = absLast - n + 1;
     if (this.od.length === 0 || absFirst > this.odStart + this.od.length) {
-      this.od = []; this.fluxHist = []; this.odStart = absFirst; this.onsets = []; this.lastAccAt = absFirst;
+      this.od = []; this.odStart = absFirst; this.onsets = []; this.lastAccAt = absFirst;
     }
+    const HALF = RATE / 2;
     let abs = this.odStart + this.od.length;
-    while (abs <= absLast) {
+    while (abs <= absLast - HALF) {
       const c = abs - absFirst;
       if (c < 0) { abs++; continue; }
-      const flux = o.cols[OV_STRIDE * c + 3];
-      this.fluxHist.push(flux);
-      if (this.fluxHist.length > RATE) this.fluxHist.shift();
-      const mean = this.fluxHist.reduce((p, q) => p + q, 0) / this.fluxHist.length;
-      this.od.push(Math.max(0, flux - mean));
+      const lo = Math.max(0, c - HALF), hi = Math.min(n, c + HALF + 1);
+      let sum = 0;
+      for (let j = lo; j < hi; j++) sum += o.cols[OV_STRIDE * j + 3];
+      this.od.push(Math.max(0, o.cols[OV_STRIDE * c + 3] - sum / (hi - lo)));
       abs++;
     }
     const keep = Math.max(this.seconds, SEG_S) * RATE + RATE;
@@ -129,19 +129,26 @@ export class TransientModule implements Module {
       return v;
     };
     const prior = (l: number) => Math.exp(-0.5 * (Math.log2((60 * RATE / l) / this.priorBpm) / 0.8) ** 2) + 0.25;
-    let best = -Infinity, bestL = 0, sum = 0, cnt = 0;
+    const scores: number[] = [];
+    let best = -Infinity, bestL = 0;
     for (let l = LAG_MIN; l <= LAG_MAX; l++) {
       const s = harm(l) * prior(l);
-      sum += s; cnt++;
+      scores.push(s);
       if (s > best) { best = s; bestL = l; }
     }
     if (bestL === 0 || best <= 0) { this.bpmConf *= 0.8; if (this.bpmConf < 0.05) this.bpm = 0; return; }
+    // confidence: winner vs the strongest competing local maximum (> 8 % away in lag)
+    let second = 0;
+    for (let i = 1; i < scores.length - 1; i++) {
+      const l = LAG_MIN + i;
+      if (scores[i] > scores[i - 1] && scores[i] >= scores[i + 1] && Math.abs(l / bestL - 1) > 0.08) second = Math.max(second, scores[i]);
+    }
     // parabolic refinement of the lag on the harmonic-summed curve
     const y0 = harm(bestL - 1), y1 = harm(bestL), y2 = harm(bestL + 1);
     const den = y0 - 2 * y1 + y2;
     const delta = Math.abs(den) > 1e-9 ? 0.5 * (y0 - y2) / den : 0;
     const bpm = 60 * RATE / (bestL + Math.max(-0.5, Math.min(0.5, delta)));
-    const conf = Math.max(0, Math.min(1, (best - sum / cnt) / Math.max(1e-6, best)));
+    const conf = Math.max(0, Math.min(1, 1 - Math.max(0, second) / best));
     // continuity: adopt a tempo that differs by > 6 % only after it repeats
     if (this.bpm === 0 || Math.abs(bpm / this.bpm - 1) < 0.06) {
       this.bpm = this.bpm === 0 ? bpm : this.bpm + (bpm - this.bpm) * 0.5;

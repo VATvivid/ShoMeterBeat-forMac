@@ -1,4 +1,4 @@
-mod audio;
+pub mod audio;
 
 use audio::{Ctl, Mode, RecCtl, Shared, Status};
 use std::sync::atomic::Ordering;
@@ -231,6 +231,18 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
     })
 }
 
+// ---- text files (preset export / import) ----------------------------------------
+
+#[tauri::command]
+fn write_text(path: String, text: String) -> Result<(), String> {
+    std::fs::write(&path, text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn read_text(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
 // ---- waveform history ----------------------------------------------------------
 
 /// Min/max envelope of the last `seconds` (see `audio/wave.rs` for the layout).
@@ -263,7 +275,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
-            wave_overview, wave_export, analyze_reference, load_audio, analyze_file
+            wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");

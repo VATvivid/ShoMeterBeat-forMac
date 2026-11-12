@@ -35,6 +35,8 @@ export interface Source {
   loadAudio(path: string): Promise<LoadedAudio | null>;
   /** Whole-file loudness / dynamics / tempo. */
   analyzeFile(path: string, priorBpm?: number): Promise<FileAnalysis>;
+  writeText(path: string, text: string): Promise<void>;
+  readText(path: string): Promise<string>;
 }
 
 export interface LoadedAudio { sr: number; channels: number; frames: number; samples: Float32Array /* interleaved */ }
@@ -83,6 +85,8 @@ class TauriSource implements Source {
   analyzeReference(path: string) { return invoke<number[]>("analyze_reference", { path }); }
   async loadAudio(path: string) { return parseLoadedAudio(await invoke<ArrayBuffer>("load_audio", { path })); }
   analyzeFile(path: string, priorBpm?: number) { return invoke<FileAnalysis>("analyze_file", { path, priorBpm }); }
+  writeText(path: string, text: string) { return invoke<void>("write_text", { path, text }); }
+  readText(path: string) { return invoke<string>("read_text", { path }); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -210,6 +214,8 @@ class MockSource implements Source {
     for (let i = 0; i < frames; i++) { const t = i / sr; const env = 0.6 * Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 2)), 6) + 0.1; const s = env * Math.sin(2 * Math.PI * 110 * t); samples[2 * i] = s; samples[2 * i + 1] = s * 0.9; }
     return { sr, channels: 2, frames, samples };
   }
+  async writeText() {}
+  async readText() { return "{}"; }
   async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9 }; }
 }
 

@@ -114,7 +114,7 @@ impl WaveHistory {
         self.fft.process(&mut self.scratch);
         let mut flux = 0.0f32;
         for k in 0..=FLUX_N / 2 {
-            let lg = (1.0 + 200.0 * self.scratch[k].norm() * (2.0 / FLUX_N as f32)).ln();
+            let lg = (1.0 + 200.0 * self.scratch[k].norm()).ln();
             let d = lg - self.prev_log[k];
             if d > 0.0 {
                 flux += d;
