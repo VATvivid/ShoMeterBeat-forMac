@@ -19,20 +19,20 @@ let L = { a: { x: 0, y: 0, w: 12, h: 7, on: true }, b: { x: 12, y: 0, w: 12, h: 
 let r = resolvePush(L, "a", { x: 12, y: 0, w: 12, h: 7 }, "normal");
 check("push down", noOverlaps(r) === null && r.b.y === 7);
 
-// 2) No room below → B pushed sideways.
+// 2) No room below → B still pushed down; the grid grows (rows > 16).
 L = { a: { x: 0, y: 0, w: 12, h: 16, on: true }, b: { x: 12, y: 0, w: 8, h: 16, on: true } };
 r = resolvePush(L, "a", { x: 10, y: 0, w: 12, h: 16 }, "normal");
-check("push sideways", noOverlaps(r) === null && r.b.x === 2);
+check("push down beyond base grid", noOverlaps(r) === null && r.b.y === 16);
 
-// 3) Horizontal strip, no room → B shrinks to fit beside A.
+// 3) Horizontal strip → B pushed right; columns grow.
 L = { a: { x: 0, y: 0, w: 12, h: 1, on: true }, b: { x: 12, y: 0, w: 12, h: 1, on: true } };
 r = resolvePush(L, "a", { x: 6, y: 0, w: 12, h: 1 }, "dockh");
-check("shrink width in strip", noOverlaps(r) === null && r.b.w === 6 && r.b.x === 18);
+check("push right in strip", noOverlaps(r) === null && r.b.x === 18 && r.b.w === 12);
 
 // 4) Cascade: A pushes B, B pushes C.
 L = { a: { x: 0, y: 0, w: 8, h: 4, on: true }, b: { x: 8, y: 0, w: 8, h: 4, on: true }, c: { x: 8, y: 4, w: 8, h: 4, on: true } };
 r = resolvePush(L, "a", { x: 8, y: 0, w: 8, h: 4 }, "normal");
-check("cascade", noOverlaps(r) === null);
+check("cascade", noOverlaps(r) === null && r.b.y === 4 && r.c.y === 8);
 
 // 5) Off tiles are ignored.
 L = { a: { x: 0, y: 0, w: 8, h: 4, on: true }, z: { x: 8, y: 0, w: 8, h: 4, on: false } };

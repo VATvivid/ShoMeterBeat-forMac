@@ -24,6 +24,12 @@ function buildModulesPanel() {
     cb.addEventListener("change", () => {
       const { cols, rows } = GRID_DIMS[grid.layoutKind];
       if (!layout[id]) layout[id] = { x: 0, y: 0, w: Math.min(8, cols), h: Math.min(6, rows), on: true };
+      if (cb.checked) {
+        // Append after everything else so nothing overlaps (the grid grows if needed).
+        const d = grid.dims();
+        if (grid.layoutKind === "dockh") { layout[id].x = d.cols; layout[id].y = 0; }
+        else { layout[id].y = d.rows; layout[id].x = Math.min(layout[id].x, cols - layout[id].w); }
+      }
       layout[id].on = cb.checked;
       saveLayout(grid.layoutKind);
       grid.sync();

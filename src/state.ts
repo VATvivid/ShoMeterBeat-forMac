@@ -9,11 +9,24 @@ export type DockMode = "none" | "top" | "bottom" | "left" | "right";
 /** Layout family: normal grid, horizontal strip (top/bottom), vertical strip (left/right). */
 export type LayoutKind = "normal" | "dockh" | "dockv";
 
+/** Base grid size per layout kind. The grid grows beyond this when tiles need the room
+ *  (rows for normal/dockv, columns for dockh) and shrinks back when they fit again. */
 export const GRID_DIMS: Record<LayoutKind, { cols: number; rows: number }> = {
   normal: { cols: 24, rows: 16 },
   dockh: { cols: 24, rows: 1 },
   dockv: { cols: 1, rows: 24 },
 };
+
+/** Effective grid size: base dims, extended to contain every visible tile. */
+export function effectiveDims(kind: LayoutKind, rects: Iterable<{ x: number; y: number; w: number; h: number }>): { cols: number; rows: number } {
+  const base = GRID_DIMS[kind];
+  let cols = base.cols, rows = base.rows;
+  for (const r of rects) {
+    if (kind === "dockh") cols = Math.max(cols, r.x + r.w);
+    else rows = Math.max(rows, r.y + r.h);
+  }
+  return { cols, rows };
+}
 
 export type SourceMode = "auto" | "output" | "input" | "plugin";
 

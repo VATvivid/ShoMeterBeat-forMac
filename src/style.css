@@ -146,8 +146,14 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
 .ctx-val { min-width: 24px; text-align: right; color: var(--fg-1); }
 .ctx-sep { height: 1px; background: var(--line); margin: 4px 2px; }
 
-/* Push preview: other tiles glide to their pushed spots */
-#grid.pushing .tile:not(.dragging) { transition: left 120ms ease, top 120ms ease, width 120ms ease, height 120ms ease; }
+/* Drop guides: dashed outline where a pushed tile will land; tiles glide there on drop */
+.push-guide {
+  position: absolute; z-index: 4; pointer-events: none; box-sizing: border-box;
+  border: 1px dashed var(--peak); border-radius: 4px; background: rgba(255, 152, 67, 0.06);
+  color: var(--peak); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 4px 6px; overflow: hidden; white-space: nowrap;
+}
+#grid.settling .tile:not(.dragging) { transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease; }
 
 /* Dock panel rows */
 #dock-panel label.row { justify-content: space-between; }

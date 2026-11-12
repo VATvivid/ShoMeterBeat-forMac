@@ -1,12 +1,14 @@
 // Tile grid: absolute-positioned tiles snapped to a cols×rows grid (dimensions depend
 // on the layout kind: free grid, horizontal strip, vertical strip). In edit mode the
 // header drags (move) and the bottom-right handle resizes. Overlapping tiles are
-// pushed out of the way (down → sideways → shrink), previewed live while dragging.
+// pushed out of the way (down in the free grid / vertical strip, right in the
+// horizontal strip); the grid grows when needed. While dragging nothing moves —
+// dashed guides show where pushed tiles will land; they glide there on drop.
 // Right-click opens the module's settings menu.
 import type { Frame } from "../engine/frame";
 import { minSize, MODULES } from "../modules";
 import type { Module } from "../modules/types";
-import { GRID_DIMS, layouts, saveLayout, type Layout, type LayoutKind } from "../state";
+import { effectiveDims, GRID_DIMS, layouts, saveLayout, type Layout, type LayoutKind } from "../state";
 import { showContextMenu } from "./contextmenu";
 
 interface Tile {
@@ -25,45 +27,27 @@ type Rect = { x: number; y: number; w: number; h: number };
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 /**
- * Places `movingId` at `target` and pushes every colliding tile away:
- * 1) below the mover if it still fits in the grid, 2) else beside it (left/right),
- * 3) else shrink the pushed tile's width (or height in vertical strips) to fit beside,
- * 4) last resort: shrink its height. Cascades until stable (bounded).
+ * Places `movingId` at `target` and pushes every colliding tile in one predictable
+ * direction: down (normal / vertical strip) or right (horizontal strip). Tiles may end
+ * up beyond the base grid; the grid then grows to fit them. Cascades until stable.
  */
 export function resolvePush(layout: Layout, movingId: string, target: Rect, kind: LayoutKind): Record<string, Rect> {
-  const { cols, rows } = GRID_DIMS[kind];
   const out: Record<string, Rect> = {};
   for (const [id, r] of Object.entries(layout)) if (r.on) out[id] = { x: r.x, y: r.y, w: r.w, h: r.h };
   out[movingId] = { ...target };
+  // Process in reading order so cascades are deterministic.
+  const order = Object.keys(out).filter((id) => id !== movingId).sort((p, q) => (out[p].y - out[q].y) || (out[p].x - out[q].x));
   const queue = [movingId];
   let iter = 0;
-  while (queue.length && iter++ < 300) {
+  while (queue.length && iter++ < 400) {
     const id = queue.shift()!;
     const a = out[id];
-    for (const [oid, b] of Object.entries(out)) {
-      if (oid === id || oid === movingId || !overlap(a, b)) continue;
-      const min = minSize(oid, kind);
-      // 1) push down
-      if (kind !== "dockh" && a.y + a.h + b.h <= rows) { b.y = a.y + a.h; queue.push(oid); continue; }
-      // 2) push sideways (whichever is closer)
-      const right = a.x + a.w, left = a.x - b.w;
-      const cands: number[] = [];
-      if (right + b.w <= cols) cands.push(right);
-      if (left >= 0) cands.push(left);
-      if (cands.length) { b.x = cands.sort((p, q) => Math.abs(p - b.x) - Math.abs(q - b.x))[0]; queue.push(oid); continue; }
-      // 3) shrink width to fit beside the mover
-      const spaceR = cols - right, spaceL = a.x;
-      if (kind !== "dockv" && (spaceR >= min.w || spaceL >= min.w)) {
-        if (spaceR >= spaceL) { b.x = right; b.w = spaceR; } else { b.x = 0; b.w = spaceL; }
-        queue.push(oid); continue;
-      }
-      // 4) shrink height below the mover (vertical strips / tall grids)
-      const spaceB = rows - (a.y + a.h), spaceT = a.y;
-      if (spaceB >= min.h || spaceT >= min.h) {
-        if (spaceB >= spaceT) { b.y = a.y + a.h; b.h = spaceB; } else { b.y = 0; b.h = spaceT; }
-        queue.push(oid); continue;
-      }
-      // Give up on this one (stays overlapped).
+    for (const oid of order) {
+      if (oid === id) continue;
+      const b = out[oid];
+      if (!overlap(a, b)) continue;
+      if (kind === "dockh") b.x = a.x + a.w; else b.y = a.y + a.h;
+      queue.push(oid);
     }
   }
   return out;
@@ -75,8 +59,9 @@ export class Grid {
   private ghost: HTMLElement;
   private z = 1;
   private kind: LayoutKind = "normal";
-  /** Live preview rects during a drag (null when idle). */
+  /** Resolved rects during a drag (null when idle) — shown as guides, applied on drop. */
   private preview: Record<string, Rect> | null = null;
+  private guides: HTMLElement[] = [];
 
   constructor(private root: HTMLElement) {
     this.ghost = document.createElement("div");
@@ -114,8 +99,14 @@ export class Grid {
     this.relayout();
   }
 
+  /** Grid size in cells: base dims grown to contain every tile (and the drag preview). */
+  dims() {
+    const rects = this.preview ? Object.values(this.preview) : Object.values(this.layout).filter((r) => r.on);
+    return effectiveDims(this.kind, rects);
+  }
+
   private cell() {
-    const { cols, rows } = GRID_DIMS[this.kind];
+    const { cols, rows } = this.dims();
     const W = this.root.clientWidth, H = this.root.clientHeight;
     return { cw: (W - GUTTER * (cols - 1)) / cols, ch: (H - GUTTER * (rows - 1)) / rows, cols, rows };
   }
@@ -133,7 +124,26 @@ export class Grid {
   }
 
   private rectOf(id: string): Rect {
-    return this.preview?.[id] ?? this.layout[id];
+    return this.layout[id];
+  }
+
+  private showGuides(resolved: Record<string, Rect>, movingId: string) {
+    let k = 0;
+    for (const [id, r] of Object.entries(resolved)) {
+      const cur = this.layout[id];
+      if (id === movingId || (cur.x === r.x && cur.y === r.y && cur.w === r.w && cur.h === r.h)) continue;
+      let g = this.guides[k];
+      if (!g) { g = document.createElement("div"); g.className = "push-guide"; this.root.appendChild(g); this.guides[k] = g; }
+      const p = this.rectPx(r);
+      Object.assign(g.style, { display: "block", left: `${p.left}px`, top: `${p.top}px`, width: `${p.width}px`, height: `${p.height}px` });
+      g.textContent = this.tiles.get(id)?.module.title ?? id;
+      k++;
+    }
+    for (; k < this.guides.length; k++) this.guides[k].style.display = "none";
+  }
+
+  private hideGuides() {
+    for (const g of this.guides) g.style.display = "none";
   }
 
   private place(t: Tile, rect?: Rect) {
@@ -220,29 +230,33 @@ export class Grid {
       e.preventDefault();
       target.setPointerCapture(e.pointerId);
       const start = { ...this.layout[t.id] };
-      const { cw, ch, cols, rows } = this.cell();
+      const { cw, ch } = this.cell();
+      const base = GRID_DIMS[this.kind];
+      // Movement bounds: fixed along the non-growing axis, open along the growing one.
+      const maxX = this.kind === "dockh" ? Infinity : base.cols;
+      const maxY = this.kind === "dockh" ? base.rows : Infinity;
       const min = minSize(t.id, this.kind);
       const sx = e.clientX, sy = e.clientY;
       let next: Rect = { ...start };
       t.el.classList.add("dragging");
       t.el.style.zIndex = String(++this.z);
       this.ghost.style.display = "block";
-      this.root.classList.add("pushing");
       const update = (ev: PointerEvent) => {
         const dx = Math.round((ev.clientX - sx) / (cw + GUTTER));
         const dy = Math.round((ev.clientY - sy) / (ch + GUTTER));
         if (mode === "move") {
-          next = { ...start, x: Math.max(0, Math.min(cols - start.w, start.x + dx)), y: Math.max(0, Math.min(rows - start.h, start.y + dy)) };
-          const p = this.rectPx(next);
-          Object.assign(t.el.style, { left: `${p.left + (ev.clientX - sx) - dx * (cw + GUTTER)}px`, top: `${p.top + (ev.clientY - sy) - dy * (ch + GUTTER)}px` });
+          next = { ...start, x: Math.max(0, Math.min(maxX - start.w, start.x + dx)), y: Math.max(0, Math.min(maxY - start.h, start.y + dy)) };
+          // The dragged tile follows the pointer freely; everything else stays put.
+          const p = this.rectPx(start);
+          Object.assign(t.el.style, { left: `${p.left + (ev.clientX - sx)}px`, top: `${p.top + (ev.clientY - sy)}px` });
         } else {
-          next = { ...start, w: Math.max(min.w, Math.min(cols - start.x, start.w + dx)), h: Math.max(min.h, Math.min(rows - start.y, start.h + dy)) };
+          next = { ...start, w: Math.max(min.w, Math.min(maxX - start.x, start.w + dx)), h: Math.max(min.h, Math.min(maxY - start.y, start.h + dy)) };
         }
+        const resolved = resolvePush(this.layout, t.id, next, this.kind);
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
-        // Live push preview for the other tiles.
-        this.preview = resolvePush(this.layout, t.id, next, this.kind);
-        for (const o of this.tiles.values()) if (o.id !== t.id) this.place(o, this.preview[o.id]);
+        this.showGuides(resolved, t.id);
+        this.preview = resolved;
         if (mode === "resize") this.place(t, next);
       };
       const finish = (ev: PointerEvent) => {
@@ -252,12 +266,15 @@ export class Grid {
         try { target.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
         t.el.classList.remove("dragging");
         this.ghost.style.display = "none";
-        this.root.classList.remove("pushing");
+        this.hideGuides();
         const resolved = this.preview ?? resolvePush(this.layout, t.id, next, this.kind);
         this.preview = null;
         for (const [id, r] of Object.entries(resolved)) Object.assign(this.layout[id], r);
         saveLayout(this.kind);
+        // Glide everything (including the grid rescale) to the new arrangement.
+        this.root.classList.add("settling");
         this.relayout();
+        setTimeout(() => this.root.classList.remove("settling"), 220);
       };
       target.addEventListener("pointermove", update);
       target.addEventListener("pointerup", finish);
