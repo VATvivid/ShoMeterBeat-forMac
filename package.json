@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "smoke": "vite build --config scripts/vite.smoke.mjs && node scripts/smoke.mjs",
+    "smoke": "vite build --config scripts/vite.smoke.mjs && node scripts/smoke.mjs && vite build --config scripts/vite.push.mjs && node scripts/push.test.mjs",
     "plugin": "python -I -X utf8 scripts/bundle_plugin.py"
   },
   "dependencies": {

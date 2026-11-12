@@ -1,6 +1,6 @@
 import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
-import { fmtDb, type DrawCtx, type Module } from "./types";
+import { fmtDb, type DrawCtx, type Module, type SettingItem } from "./types";
 import { settings, saveSettings } from "../state";
 
 const HISTORY_S = 60;
@@ -23,19 +23,14 @@ export class LoudnessModule implements Module {
   private histS = new Float32Array(HISTORY_S * HIST_HZ).fill(-120);
   private acc = 0;
 
-  headControl() {
-    const sel = document.createElement("select");
-    sel.className = "mini";
-    for (const t of TARGETS) {
-      const o = document.createElement("option");
-      o.value = String(t.lufs);
-      o.textContent = t.label;
-      if (t.lufs === settings.loudnessTarget) o.selected = true;
-      sel.appendChild(o);
-    }
-    sel.addEventListener("change", () => { settings.loudnessTarget = Number(sel.value); saveSettings(); });
-    sel.addEventListener("pointerdown", (e) => e.stopPropagation());
-    return sel;
+  settings(): SettingItem[] {
+    return [
+      {
+        type: "select", label: "타깃", value: String(settings.loudnessTarget),
+        options: TARGETS.map((t) => ({ value: String(t.lufs), label: t.label })),
+        onChange: (v) => { settings.loudnessTarget = Number(v); saveSettings(); },
+      },
+    ];
   }
 
   draw(d: DrawCtx, f: Frame) {

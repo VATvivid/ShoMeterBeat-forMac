@@ -7,13 +7,20 @@ export interface DrawCtx {
   dt: number; // seconds since previous draw
 }
 
+/** One row in a module's right-click settings menu. */
+export type SettingItem =
+  | { type: "select"; label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void }
+  | { type: "toggle"; label: string; value: boolean; onChange: (v: boolean) => void }
+  | { type: "range"; label: string; value: number; min: number; max: number; step: number; format?: (v: number) => string; onChange: (v: number) => void }
+  | { type: "action"; label: string; onClick: () => void };
+
 export interface Module {
   readonly id: string;
   readonly title: string;
   /** Optional short text shown in the tile header (e.g. "L -12.3  R -11.9"). */
   headReadout?(f: Frame): string;
-  /** Optional control element mounted in the tile header. */
-  headControl?(): HTMLElement | null;
+  /** Items for the tile's right-click menu. */
+  settings?(): SettingItem[];
   draw(d: DrawCtx, f: Frame): void;
   resize?(w: number, h: number): void;
 }

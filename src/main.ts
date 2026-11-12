@@ -2,7 +2,8 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { createSource, inTauri } from "./engine/source";
 import { Grid } from "./layout/grid";
 import { MODULE_TITLES } from "./modules";
-import { layout, resetLayout, saveLayout, saveSettings, settings } from "./state";
+import { applyDock } from "./dock";
+import { GRID_DIMS, layoutKindFor, resetLayout, saveLayout, saveSettings, settings, type DockMode } from "./state";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -18,11 +19,13 @@ function buildModulesPanel() {
     const label = document.createElement("label");
     const cb = document.createElement("input");
     cb.type = "checkbox";
+    const layout = grid.layout;
     cb.checked = !!layout[id]?.on;
     cb.addEventListener("change", () => {
-      if (!layout[id]) layout[id] = { x: 0, y: 0, w: 8, h: 6, on: true };
+      const { cols, rows } = GRID_DIMS[grid.layoutKind];
+      if (!layout[id]) layout[id] = { x: 0, y: 0, w: Math.min(8, cols), h: Math.min(6, rows), on: true };
       layout[id].on = cb.checked;
-      saveLayout();
+      saveLayout(grid.layoutKind);
       grid.sync();
     });
     label.append(cb, document.createTextNode(title));
@@ -41,7 +44,54 @@ function setEditing(on: boolean) {
   editBtn.textContent = on ? "편집 끝내기" : "레이아웃 편집";
 }
 editBtn.addEventListener("click", () => setEditing(!grid.isEditing));
-$("reset-layout-btn").addEventListener("click", () => { resetLayout(); grid.sync(); buildModulesPanel(); });
+grid.onToggleEdit = () => setEditing(!grid.isEditing);
+$("reset-layout-btn").addEventListener("click", () => { resetLayout(grid.layoutKind); grid.sync(); buildModulesPanel(); });
+
+// ---- dock mode -------------------------------------------------------------
+const dockBtn = $<HTMLButtonElement>("dock-btn");
+const dockPanel = $("dock-panel");
+const DOCKS: { mode: DockMode; label: string }[] = [
+  { mode: "none", label: "도킹 해제 (일반 창)" },
+  { mode: "top", label: "화면 위에 붙이기" },
+  { mode: "bottom", label: "화면 아래에 붙이기" },
+  { mode: "left", label: "화면 왼쪽에 붙이기" },
+  { mode: "right", label: "화면 오른쪽에 붙이기" },
+];
+async function setDock(mode: DockMode) {
+  await applyDock(mode).catch((e) => console.error(e));
+  grid.setKind(layoutKindFor(mode));
+  buildModulesPanel();
+  buildDockPanel();
+  dockBtn.classList.toggle("on", mode !== "none");
+  dockBtn.textContent = mode === "none" ? "도킹 ▾" : `도킹: ${({ top: "위", bottom: "아래", left: "왼쪽", right: "오른쪽" } as Record<string, string>)[mode]} ▾`;
+}
+function buildDockPanel() {
+  dockPanel.innerHTML = "";
+  for (const d of DOCKS) {
+    const row = document.createElement("label");
+    const rb = document.createElement("input");
+    rb.type = "radio"; rb.name = "dock"; rb.checked = settings.dock === d.mode;
+    rb.addEventListener("change", () => { if (rb.checked) setDock(d.mode); });
+    row.append(rb, document.createTextNode(d.label));
+    dockPanel.appendChild(row);
+  }
+  const sizeRow = document.createElement("label");
+  sizeRow.className = "row";
+  const sel = document.createElement("select");
+  sel.className = "mini";
+  for (const px of [120, 160, 200, 260, 320, 400]) {
+    const o = document.createElement("option");
+    o.value = String(px); o.textContent = `${px}px`; o.selected = settings.dockSize === px;
+    sel.appendChild(o);
+  }
+  sel.addEventListener("change", () => { settings.dockSize = Number(sel.value); saveSettings(); if (settings.dock !== "none") setDock(settings.dock); });
+  sizeRow.append(document.createTextNode("띠 두께 "), sel);
+  dockPanel.appendChild(sizeRow);
+}
+buildDockPanel();
+dockBtn.addEventListener("click", (e) => { e.stopPropagation(); dockPanel.classList.toggle("hidden"); modulesPanel.classList.add("hidden"); });
+document.addEventListener("click", (e) => { if (!dockPanel.contains(e.target as Node)) dockPanel.classList.add("hidden"); });
+if (settings.dock !== "none") setDock(settings.dock);
 $("reset-loudness-btn").addEventListener("click", () => source.resetLoudness());
 
 // ---- recording ---------------------------------------------------------------

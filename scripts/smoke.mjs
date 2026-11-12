@@ -12,18 +12,19 @@ const ctxProxy = () => new Proxy({}, {
 });
 const mkCanvas = () => ({ width: 1, height: 1, style: {}, getContext: () => ctxProxy(), parentElement: null });
 const vars = { "--sig": "#2eddc4", "--sig-2": "#5b8cff", "--peak": "#ff9843", "--clip": "#ff4d5e", "--target": "#f2d16b", "--grid": "#23262c", "--line": "#2b2f36", "--fg-0": "#e6e8ec", "--fg-1": "#9aa1ab", "--fg-2": "#5f6671", "--bg-3": "#262a31", "--map-0": "#0e0f12", "--map-1": "#1b2a6b", "--map-2": "#2eddc4", "--map-3": "#f2f5a0", "--font": "Inter" };
-globalThis.window = { devicePixelRatio: 1 };
-globalThis.document = { documentElement: {}, createElement: (t) => t === "canvas" ? mkCanvas() : { style: {}, className: "", appendChild() {}, addEventListener() {}, value: "-14", textContent: "" } };
+globalThis.window = { devicePixelRatio: 1, addEventListener() {}, innerWidth: 1280, innerHeight: 800 };
+globalThis.document = { documentElement: {}, addEventListener() {}, createElement: (t) => t === "canvas" ? mkCanvas() : { style: {}, className: "", appendChild() {}, addEventListener() {}, value: "-14", textContent: "" } };
 globalThis.getComputedStyle = () => ({ getPropertyValue: (k) => vars[k] ?? "" });
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.ImageData = class { constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } };
 const bundle = pathToFileURL(fileURLToPath(new URL("../node_modules/.smoke/smoke.js", import.meta.url))).href;
-const { MODULES, createSource } = await import(bundle);
+const { MODULES, createSource, settings } = await import(bundle);
+settings.modules.spectrogram = { view: "3d", speed: 2 }; // exercise the 3D path too
 const src = createSource();
 let bad = 0;
 for (const [id, mk] of Object.entries(MODULES)) {
   const m = mk();
-  m.headControl?.();
+  for (const it of m.settings?.() ?? []) { if (it.type === "select") it.onChange(it.value); if (it.type === "toggle") it.onChange(it.value); if (it.type === "range") it.onChange(it.value); }
   for (const [w, h] of [[640, 300], [260, 180], [120, 90]]) {
     m.resize?.(w, h);
     for (let i = 0; i < 120; i++) {

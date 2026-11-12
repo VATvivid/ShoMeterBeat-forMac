@@ -7,6 +7,7 @@ import { StereoModule } from "./stereo";
 import { TractModule } from "./tract";
 import type { ModuleFactory } from "./types";
 import { VowelMapModule } from "./vowelmap";
+import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
 export const MODULES: Record<string, ModuleFactory> = {
@@ -30,3 +31,11 @@ export const MODULE_TITLES: Record<string, string> = {
   tract: "Vocal Tract (발성 기관)",
   vowelmap: "Vowel Map (모음 포먼트)",
 };
+
+/** Minimum tile size in grid cells per layout kind. */
+export function minSize(id: string, kind: LayoutKind): { w: number; h: number } {
+  if (kind === "dockh") return { w: id === "levels" ? 1 : 2, h: 1 };
+  if (kind === "dockv") return { w: 1, h: 2 };
+  if (id === "levels") return { w: 2, h: 3 };
+  return { w: 3, h: 3 };
+}

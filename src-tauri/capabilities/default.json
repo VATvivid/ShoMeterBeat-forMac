@@ -1,7 +1,20 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core APIs + save dialog for recordings. App commands need no plugin permissions.",
+  "description": "Main window: core APIs, save dialog for recordings, window geometry for dock mode. App commands need no plugin permissions.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-save"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-save",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-decorations",
+    "core:window:allow-set-resizable",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-current-monitor",
+    "core:window:allow-scale-factor",
+    "core:window:allow-start-dragging"
+  ]
 }

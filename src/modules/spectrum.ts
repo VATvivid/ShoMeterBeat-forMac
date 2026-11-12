@@ -1,11 +1,11 @@
 import { freqToIndex, N_SPEC, pointFreq, SILENCE_DB, type Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
-import { ballistic, type DrawCtx, type Module } from "./types";
+import { ballistic, type DrawCtx, type Module, type SettingItem } from "./types";
+import { modSetting, setModSetting } from "../state";
 
-const DB_TOP = 0, DB_BOTTOM = -96;
+const DB_TOP = 0;
 const PAD_L = 34, PAD_B = 22, PAD_T = 8, PAD_R = 8;
 const FREQ_TICKS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
-const SLOPE_DB_PER_OCT = 4.5; // pink-noise tilt so music reads roughly flat
 
 export class SpectrumModule implements Module {
   readonly id = "spectrum";
@@ -14,8 +14,22 @@ export class SpectrumModule implements Module {
   private hold = new Float32Array(N_SPEC).fill(SILENCE_DB);
   private holdAge = new Float32Array(N_SPEC);
 
+  private get slope() { return modSetting(this.id, "slope", 4.5); }
+  private get range() { return modSetting(this.id, "range", 96); }
+  private get showHold() { return modSetting(this.id, "hold", true); }
+
+  settings(): SettingItem[] {
+    return [
+      { type: "select", label: "기울기", value: String(this.slope), options: [0, 3, 4.5, 6].map((v) => ({ value: String(v), label: v === 0 ? "0 dB/oct (평탄)" : `+${v} dB/oct` })), onChange: (v) => setModSetting(this.id, "slope", Number(v)) },
+      { type: "select", label: "dB 범위", value: String(this.range), options: [60, 72, 96, 120].map((v) => ({ value: String(v), label: `${v} dB` })), onChange: (v) => setModSetting(this.id, "range", Number(v)) },
+      { type: "toggle", label: "피크 홀드", value: this.showHold, onChange: (v) => setModSetting(this.id, "hold", v) },
+    ];
+  }
+
   draw(d: DrawCtx, f: Frame) {
     const { ctx, w, h, dt } = d;
+    const DB_BOTTOM = -this.range;
+    const SLOPE_DB_PER_OCT = this.slope;
     const x0 = PAD_L, x1 = w - PAD_R, y0 = PAD_T, y1 = h - PAD_B;
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 20 || ph < 20) return;
@@ -72,11 +86,13 @@ export class SpectrumModule implements Module {
     ctx.stroke();
 
     // Peak hold
+    if (this.showHold) {
     ctx.beginPath();
     for (let i = 0; i < N_SPEC; i++) { const x = xOf(i), y = yOf(this.hold[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
     ctx.strokeStyle = withAlpha(theme("peak"), 0.8);
     ctx.lineWidth = 1;
     ctx.stroke();
+    }
 
     // Units
     ctx.fillStyle = theme("fg-2");

@@ -1,6 +1,7 @@
 import { N_LISSA, type Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
-import type { DrawCtx, Module } from "./types";
+import type { DrawCtx, Module, SettingItem } from "./types";
+import { modSetting, setModSetting } from "../state";
 
 const BAR_H = 26;
 
@@ -11,6 +12,12 @@ export class StereoModule implements Module {
   private trail = document.createElement("canvas");
   private tctx = this.trail.getContext("2d")!;
   private corr = 0;
+
+  settings(): SettingItem[] {
+    return [
+      { type: "range", label: "잔상", value: modSetting(this.id, "trail", 8), min: 2, max: 30, step: 1, format: (v) => `${v}`, onChange: (v) => setModSetting(this.id, "trail", v) },
+    ];
+  }
 
   headReadout(f: Frame) {
     return `corr ${f.correlation >= 0 ? "+" : "−"}${Math.abs(f.correlation).toFixed(2)}`;
@@ -30,7 +37,7 @@ export class StereoModule implements Module {
     t.setTransform(dpr, 0, 0, dpr, 0, 0);
     // Fade the previous trail.
     t.globalCompositeOperation = "destination-out";
-    t.fillStyle = `rgba(0,0,0,${Math.min(1, dt * 8)})`;
+    t.fillStyle = `rgba(0,0,0,${Math.min(1, dt * (32 - modSetting(this.id, "trail", 8)))})`;
     t.fillRect(0, 0, w, areaH);
     t.globalCompositeOperation = "source-over";
     // Plot new points: x = (L−R)/√2, y = (L+R)/√2.

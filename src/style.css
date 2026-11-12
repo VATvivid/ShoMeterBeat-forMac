@@ -125,3 +125,42 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
   .tile-head { letter-spacing: 0.04em; }
   #st-rate { display: none; }
 }
+
+/* Context menu (tile settings) */
+.ctxmenu {
+  position: fixed; z-index: 100; min-width: 220px; max-width: 320px;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 4px; font-size: 11px;
+}
+.ctx-title { padding: 5px 8px 6px; color: var(--fg-1); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.ctx-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 8px; border-radius: 4px; color: var(--fg-0); }
+.ctx-row.clickable { cursor: pointer; }
+.ctx-row.clickable:hover { background: rgba(255, 255, 255, 0.05); }
+.ctx-row.danger { color: var(--clip); }
+.ctx-label { color: var(--fg-1); white-space: nowrap; }
+.ctx-row select.mini { max-width: 180px; }
+.ctx-row input[type="checkbox"] { appearance: none; width: 12px; height: 12px; margin: 0; border: 1px solid var(--fg-2); border-radius: 2px; background: transparent; cursor: pointer; }
+.ctx-row input[type="checkbox"]:checked { background: var(--sig); border-color: var(--sig); }
+.ctx-range { display: flex; align-items: center; gap: 6px; }
+.ctx-range input[type="range"] { width: 110px; accent-color: var(--sig); }
+.ctx-val { min-width: 24px; text-align: right; color: var(--fg-1); }
+.ctx-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+
+/* Push preview: other tiles glide to their pushed spots */
+#grid.pushing .tile:not(.dragging) { transition: left 120ms ease, top 120ms ease, width 120ms ease, height 120ms ease; }
+
+/* Dock panel rows */
+#dock-panel label.row { justify-content: space-between; }
+#dock-panel input[type="radio"] { appearance: none; width: 12px; height: 12px; margin: 0; border: 1px solid var(--fg-2); border-radius: 50%; background: transparent; cursor: pointer; }
+#dock-panel input[type="radio"]:checked { border: 3px solid var(--sig); }
+
+/* Docked: slim chrome, no status bar, tiles without headers to save space */
+body.docked #statusbar { display: none; }
+body.docked #toolbar { height: 28px; flex: 0 0 28px; }
+body.docked .btn { height: 22px; padding: 0 7px; }
+body.docked select { height: 22px; min-width: 120px; max-width: 200px; }
+body.docked .app-name { display: none; }
+body.docked #grid { margin: 4px; }
+body.docked .tile-head { height: 18px; flex: 0 0 18px; font-size: 10px; }
+body.docked .tile-head .readout { display: none; }
+body.docked.dock-tiny .tile-head { display: none; }
