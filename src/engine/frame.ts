@@ -33,6 +33,10 @@ export interface Frame {
   voiced: number;
   /** Seconds recorded so far, or -1 when not recording. */
   recSeconds: number;
+  /** Spectral flatness 0..1 (1 = white-noise-like). */
+  flatness: number;
+  /** Spectral centroid in Hz. */
+  centroid: number;
   specL: Float32Array;
   specR: Float32Array;
   scopeL: Float32Array;
@@ -79,6 +83,8 @@ export function parseFrame(buf: ArrayBuffer): Frame | null {
     f3: v[25],
     voiced: v[26],
     recSeconds: v[27],
+    flatness: v[28],
+    centroid: v[29],
     specL: take(N_SPEC),
     specR: take(N_SPEC),
     scopeL: take(N_SCOPE),
@@ -94,7 +100,7 @@ export function emptyFrame(): Frame {
     peak: [SILENCE_DB, SILENCE_DB], rms: [SILENCE_DB, SILENCE_DB], truePeak: [SILENCE_DB, SILENCE_DB],
     correlation: 0, lufsM: SILENCE_DB, lufsS: SILENCE_DB, lufsI: SILENCE_DB, lra: 0,
     maxTP: SILENCE_DB, maxM: SILENCE_DB, maxS: SILENCE_DB,
-    f0: 0, f1: 0, f2: 0, f3: 0, voiced: 0, recSeconds: -1,
+    f0: 0, f1: 0, f2: 0, f3: 0, voiced: 0, recSeconds: -1, flatness: 0, centroid: 0,
     specL: new Float32Array(N_SPEC).fill(SILENCE_DB), specR: new Float32Array(N_SPEC).fill(SILENCE_DB),
     scopeL: new Float32Array(N_SCOPE), scopeR: new Float32Array(N_SCOPE), lissa: new Float32Array(2 * N_LISSA),
     envelope: new Float32Array(N_ENV).fill(SILENCE_DB),

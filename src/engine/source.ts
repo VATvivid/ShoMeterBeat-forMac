@@ -110,6 +110,12 @@ class MockSource implements Source {
       f.f0 = 440 * Math.pow(2, (seq[step] + vib - 69) / 12);
       if (this.t % 4 > 3.4) f.voiced = 0.1;
     }
+    // Breath in the gaps: noisy, bright, a short burst.
+    const gapT = this.t % 4;
+    const breathing = gapT > 3.45 && gapT < 3.85;
+    f.flatness = breathing ? 0.55 : 0.08;
+    f.centroid = breathing ? 2800 : 900;
+    if (breathing) { f.rms = [-30, -30]; f.lufsM = -28; }
     f.voiced = 0.6 + 0.4 * Math.sin(this.t * 2.3) > 0.5 ? 0.9 : 0.2;
     for (let i = 0; i < N_ENV; i++) {
       const hz = (ENV_MAX_HZ * i) / (N_ENV - 1);

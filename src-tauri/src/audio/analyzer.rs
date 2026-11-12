@@ -26,6 +26,9 @@ pub struct Analyzer {
     scratch: Vec<Complex<f32>>,
     mags: Vec<f32>,
     block_peak: [f32; 2],
+    sr: f32,
+    flatness: f32,
+    centroid: f32,
 }
 
 impl Analyzer {
@@ -60,6 +63,9 @@ impl Analyzer {
             scratch: vec![Complex::new(0.0, 0.0); FFT_N],
             mags: vec![0.0; FFT_N / 2 + 1],
             block_peak: [0.0; 2],
+            sr,
+            flatness: 0.0,
+            centroid: 0.0,
         }
     }
 
@@ -113,6 +119,29 @@ impl Analyzer {
         for i in 0..=FFT_N / 2 {
             self.mags[i] = self.scratch[i].norm() * norm;
         }
+        if ch == 0 {
+            // Noise-likeness and brightness over 100 Hz … 8 kHz (power domain).
+            let bin_hz = self.sr / FFT_N as f32;
+            let lo = (100.0 / bin_hz) as usize;
+            let hi = ((8000.0 / bin_hz) as usize).min(FFT_N / 2);
+            let (mut log_sum, mut sum, mut wsum, mut n) = (0.0f64, 0.0f64, 0.0f64, 0usize);
+            for i in lo..hi {
+                let p = (self.mags[i] as f64).powi(2) + 1e-18;
+                log_sum += p.ln();
+                sum += p;
+                wsum += p * (i as f64 * bin_hz as f64);
+                n += 1;
+            }
+            if n > 0 && sum > 1e-14 {
+                let geo = (log_sum / n as f64).exp();
+                let arith = sum / n as f64;
+                self.flatness = (geo / arith).clamp(0.0, 1.0) as f32;
+                self.centroid = (wsum / sum) as f32;
+            } else {
+                self.flatness = 0.0;
+                self.centroid = 0.0;
+            }
+        }
         out.clear();
         for i in 0..N_SPEC {
             let (lo, hi) = self.bands[i];
@@ -149,6 +178,8 @@ impl Analyzer {
 
         f.peak = [to_db(self.block_peak[0]), to_db(self.block_peak[1])];
         self.block_peak = [0.0; 2];
+        f.flatness = self.flatness;
+        f.centroid = self.centroid;
 
         f.scope_l = self.tail(0, N_SCOPE);
         f.scope_r = self.tail(1, N_SCOPE);

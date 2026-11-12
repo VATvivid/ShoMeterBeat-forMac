@@ -13,7 +13,8 @@
 //! 20 running (1/0)       21 channels
 //! 22 f0 (Hz)            23 F1 (Hz)       24 F2 (Hz)          25 F3 (Hz)
 //! 26 voiced (0..1)      27 rec seconds (<0 = not recording)
-//! 28..32 reserved
+//! 28 spectral flatness (0..1, noise-like → 1)   29 spectral centroid (Hz)
+//! 30..32 reserved
 //! 32                      spectrum L  [N_SPEC] dB
 //! 32+N_SPEC               spectrum R  [N_SPEC] dB
 //! 32+2*N_SPEC             scope L     [N_SCOPE]
@@ -53,6 +54,8 @@ pub struct Frame {
     pub f3: f32,
     pub voiced: f32,
     pub rec_seconds: f32,
+    pub flatness: f32,
+    pub centroid: f32,
     pub spectrum_l: Vec<f32>,
     pub spectrum_r: Vec<f32>,
     pub scope_l: Vec<f32>,
@@ -85,6 +88,8 @@ impl Default for Frame {
             f3: 0.0,
             voiced: 0.0,
             rec_seconds: -1.0,
+            flatness: 0.0,
+            centroid: 0.0,
             spectrum_l: vec![SILENCE_DB; N_SPEC],
             spectrum_r: vec![SILENCE_DB; N_SPEC],
             scope_l: vec![0.0; N_SCOPE],
@@ -128,6 +133,8 @@ impl Frame {
             self.f3,
             self.voiced,
             self.rec_seconds,
+            self.flatness,
+            self.centroid,
         ]);
         v.resize(HEADER, 0.0);
         v.extend_from_slice(&self.spectrum_l);

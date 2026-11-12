@@ -22,6 +22,13 @@ export class TractModule implements Module {
   private level = 0;      // 0..1 from momentary loudness
   private phase = 0;      // glottal cycle
   private particles: { t: number; off: number; speed: number }[] = [];
+  private turb: { t: number; off: number; speed: number; life: number }[] = [];
+  private breath = 0;          // smoothed breath intensity 0..1
+  private breathPeak = 0;      // for onset detection
+  private breathOnsets: number[] = [];
+  private breathRate = 0;      // per minute, 0 = unknown
+  private lung = 0.5;          // 0 empty … 1 full (inferred)
+  private clock = 0;
   private m1 = new Median(5);
   private m2 = new Median(5);
   private f1 = 0; private f2 = 0;
@@ -34,7 +41,17 @@ export class TractModule implements Module {
 
   headReadout(f: Frame) {
     const n = f.voiced > 0.4 ? nearestVowel(this.f1, this.f2) : null;
-    return `${n ? "[" + n.v.ipa + "] " : ""}f0 ${f.f0 > 0 && f.voiced > 0.4 ? f.f0.toFixed(0) : "—"} Hz`;
+    const br = this.breath > 0.2 ? `  숨 ${Math.round(this.breath * 100)}%` : "";
+    const rate = this.breathRate > 0 ? `  ${this.breathRate.toFixed(0)}/min` : "";
+    return `${n ? "[" + n.v.ipa + "] " : ""}f0 ${f.f0 > 0 && f.voiced > 0.4 ? f.f0.toFixed(0) : "—"} Hz${br}${rate}`;
+  }
+
+  /** Breath intensity from the frame: loud-ish, noise-like, unvoiced. */
+  private breathTarget(f: Frame): number {
+    const level = Math.min(1, Math.max(0, (f.rms[0] + 58) / 34));          // −58 dB … −24 dB
+    const noisy = Math.min(1, Math.max(0, (f.flatness - 0.15) / 0.3));      // flatness 0.15 … 0.45
+    const unvoiced = 1 - Math.min(1, Math.max(0, (f.voiced - 0.2) / 0.3));  // voiced ≤ 0.2 … 0.5
+    return level * noisy * unvoiced;
   }
 
   draw(d: DrawCtx, f: Frame) {
@@ -43,6 +60,28 @@ export class TractModule implements Module {
     const live = f.voiced > 0.4 && f.f1 > 0 && f.f2 > 0;
     if (live) { this.f1 = this.m1.push(f.f1); this.f2 = this.m2.push(f.f2); }
     const k = Math.min(1, dt * 10);
+    // ---- breath envelope (fast attack, ~300 ms release) + onset-based rate
+    this.clock += dt;
+    const bt = this.breathTarget(f);
+    this.breath = bt > this.breath ? bt : Math.max(bt, this.breath - dt * 3.3);
+    if (this.breath > 0.25 && this.breathPeak <= 0.25) {
+      const last = this.breathOnsets[this.breathOnsets.length - 1];
+      if (last === undefined || this.clock - last > 0.25) this.breathOnsets.push(this.clock);
+      while (this.breathOnsets.length > 6) this.breathOnsets.shift();
+    }
+    this.breathPeak = this.breath;
+    {
+      const on = this.breathOnsets.filter((t) => this.clock - t < 8);
+      if (on.length >= 3) {
+        const iv = on.slice(1).map((t, i) => t - on[i]);
+        const mean = iv.reduce((a, b) => a + b, 0) / iv.length;
+        const ok = iv.every((v) => v > 0.3 && v < 3 && Math.abs(v - mean) < mean * 0.5);
+        this.breathRate = ok ? 60 / mean : 0;
+      } else this.breathRate = 0;
+    }
+    // Inferred lung volume: breaths (short, bright bursts) fill, voicing empties.
+    const inhale = this.breath > 0.3 && f.centroid > 1800;
+    this.lung += ((inhale ? 1 : live ? 0.15 : this.lung) - this.lung) * Math.min(1, dt * (inhale ? 2.5 : 0.35));
     const lvl = Math.min(1, Math.max(0, (f.lufsM + 50) / 40));
     this.level += (lvl - this.level) * k;
     this.voice += ((live ? f.voiced : 0) - this.voice) * k;
@@ -134,8 +173,8 @@ export class TractModule implements Module {
     ctx.fill();
     curve(tongue, tongueC, 2);
 
-    // Larynx + vocal folds (pulse when voiced)
-    const gap = 0.004 + (this.voice > 0.2 ? 0.012 * Math.abs(Math.sin(this.phase * Math.PI)) : 0.0);
+    // Larynx + vocal folds (pulse when voiced, held open while breathing)
+    const gap = 0.004 + (this.voice > 0.2 ? 0.012 * Math.abs(Math.sin(this.phase * Math.PI)) : 0.0) + 0.02 * this.breath * (1 - this.voice);
     line([P(0.70, 0.86), P(0.70, 0.95)], outline, 1);
     const foldC = this.voice > 0.2 ? theme("clip") : outline;
     line([P(0.72 - gap, 0.87), P(0.72 - gap * 2, 0.90), P(0.72 - gap, 0.93)], foldC, 1.5);
@@ -155,6 +194,37 @@ export class TractModule implements Module {
       ctx.fillRect(x - 1, y - 1, 2, 2);
     }
 
+    // Turbulent airflow while breathing / fricatives: white specks whose spawn point
+    // follows the spectral centroid (dark "h" → glottis, bright "s/f" → teeth & lips).
+    const want2 = Math.round(this.breath * 40);
+    const spawnT = f.centroid > 4000 ? 0.78 : f.centroid > 2000 ? 0.45 : 0.08;
+    while (this.turb.length < want2) this.turb.push({ t: spawnT + Math.random() * 0.15, off: (Math.random() - 0.5) * 0.05, speed: 1.2 + Math.random(), life: 0.3 + Math.random() * 0.4 });
+    ctx.fillStyle = withAlpha(theme("fg-0"), 0.85);
+    for (let q = this.turb.length - 1; q >= 0; q--) {
+      const p = this.turb[q];
+      p.t += dt * p.speed; p.life -= dt; p.off += (Math.random() - 0.5) * 0.01;
+      if (p.life <= 0 || p.t > 1.08) { this.turb.splice(q, 1); continue; }
+      const u = Math.min(0.999, p.t) * (path.length - 1), i2 = Math.min(path.length - 2, Math.floor(u)), tt2 = u - i2;
+      const x = lerp(path[i2].x, path[i2 + 1].x, tt2) + (p.t > 1 ? (p.t - 1) * -s * 2 : 0), y = lerp(path[i2].y, path[i2 + 1].y, tt2) + p.off * s;
+      ctx.fillRect(x - 1, y - 1, 2, 2);
+    }
+    if (this.turb.length > want2 + 10) this.turb.length = want2 + 10;
+
+    // Lungs gauge (bottom-right): fill = inferred volume, ring brightens while breathing.
+    {
+      const gx = w - 18, gy = h - 18, gr = 10;
+      ctx.strokeStyle = withAlpha(theme("fg-2"), 0.8); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(gx, gy, gr, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = withAlpha(theme("sig-2"), 0.35 + 0.5 * this.breath);
+      ctx.beginPath(); ctx.arc(gx, gy, gr * Math.max(0.1, Math.sqrt(this.lung)), 0, Math.PI * 2); ctx.fill();
+      if (this.breath > 0.2) {
+        ctx.strokeStyle = withAlpha(theme("fg-0"), this.breath); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(gx, gy, gr + 2, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1;
+      }
+      ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillText(this.breathRate > 0 ? `${this.breathRate.toFixed(0)}/min` : "lungs", gx - gr - 5, gy);
+    }
+
     // Readouts
     ctx.font = font(10);
     ctx.fillStyle = theme("fg-1");
@@ -164,6 +234,7 @@ export class TractModule implements Module {
     rows.forEach(([n, v], i) => ctx.fillText(`${n} ${live && v > 0 ? v.toFixed(0) + " Hz" : "—"}`, fx, 4 + i * 13));
     ctx.textAlign = "left";
     ctx.fillStyle = theme("fg-2");
-    ctx.fillText(live ? "voiced" : "unvoiced", 6, 4);
+    const breathy = live && f.voiced < 0.65;
+    ctx.fillText(live ? (breathy ? "voiced · breathy" : "voiced") : this.breath > 0.2 ? (f.centroid > 4000 ? "fricative" : "breath") : "unvoiced", 6, 4);
   }
 }
