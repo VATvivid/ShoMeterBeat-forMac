@@ -1,4 +1,4 @@
-//! Lock-free shared-memory bridge: DAW plugin instances (writers) → re-minimeter app (reader).
+//! Lock-free shared-memory bridge: DAW plugin instances (writers) → ShowMeterBeat app (reader).
 //!
 //! One named file mapping (`Local\re-minimeter-bridge-v1`) holds `SLOTS` slots. A plugin
 //! instance claims a slot whose heartbeat is stale, then every process() call writes

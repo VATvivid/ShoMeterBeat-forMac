@@ -59,4 +59,4 @@ Speech recognition uses whisper.cpp through the `whisper-rs` crate (MIT) with gg
 Whisper models (`ggml-base.bin`, `ggml-small.bin`, …) from
 https://huggingface.co/ggerganov/whisper.cpp (MIT; original OpenAI Whisper weights, MIT).
 Models are not shipped with the installer; download with
-`scripts/fetch_models.py --whisper base` or place them in `%APPDATA%\re-minimeter\models`.
+`scripts/fetch_models.py --whisper base` or place them in `%APPDATA%\ShowMeterBeat\models`.

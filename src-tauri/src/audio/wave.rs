@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(v[2] * 65536.0 + v[3], 2000.0);
         assert_eq!(v.len(), 4 + 100 * 4);
         assert!((v[6] - 0.5).abs() < 1e-5); // rms of ±0.5 square
-        let dir = std::env::temp_dir().join("re-minimeter-test");
+        let dir = std::env::temp_dir().join("ShowMeterBeat-test");
         let dst = dir.join("sel.wav");
         let n = h.export(1500, 1600, &dst).unwrap();
         assert_eq!(n, 100);

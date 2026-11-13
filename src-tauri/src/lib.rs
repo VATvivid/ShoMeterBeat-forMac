@@ -25,7 +25,8 @@ fn set_source(engine: State<Engine>, mode: Option<Mode>, name: Option<String>) {
 
 // ---- DAW plugin install --------------------------------------------------------
 
-const PLUGIN_NAME: &str = "re-minimeter Send";
+const PLUGIN_NAME: &str = "ShowMeterBeat Send";
+const OLD_PLUGIN_NAME: &str = "re-minimeter Send"; // 2026-11-13 rename: cleaned up on install
 
 fn plugin_source_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     use tauri::Manager;
@@ -102,6 +103,11 @@ fn copy_plugin_dir(src: &std::path::Path, dst: &std::path::Path, warnings: &mut 
 fn install_plugins_from(src: &std::path::Path, common: &std::path::Path) -> Result<Vec<String>, String> {
     let mut done = Vec::new();
     let mut warnings = Vec::new();
+    // drop the copies installed under the old name (same ids: the DAW would show the plugin twice)
+    let old_clap = common.join("CLAP").join(format!("{OLD_PLUGIN_NAME}.clap"));
+    if old_clap.exists() { let _ = std::fs::remove_file(&old_clap); }
+    let old_vst = common.join("VST3").join(format!("{OLD_PLUGIN_NAME}.vst3"));
+    if old_vst.exists() { let _ = std::fs::remove_dir_all(&old_vst); }
     let clap_dst = common.join("CLAP").join(format!("{PLUGIN_NAME}.clap"));
     copy_plugin_file(&src.join(format!("{PLUGIN_NAME}.clap")), &clap_dst, &mut warnings)?;
     done.push(clap_dst.display().to_string());
@@ -563,7 +569,7 @@ fn drag_leave(app: tauri::AppHandle, st: State<XDragState>) {
 }
 
 /// Tile dropped outside its window: delivers it to the window under the pointer and
-/// returns that window's label, or `None` when the pointer is over no re-minimeter window
+/// returns that window's label, or `None` when the pointer is over no ShowMeterBeat window
 /// (the caller then opens a new pop-out window there).
 #[tauri::command]
 fn drag_drop(app: tauri::AppHandle, window: tauri::Window, st: State<XDragState>, module: String, x: f64, y: f64, w: u32, h: u32) -> Result<Option<String>, String> {
@@ -585,12 +591,12 @@ fn to_screen(window: tauri::Window, x: f64, y: f64) -> Result<(i32, i32), String
 
 // ---- clip folder (drag-out to DAW) -------------------------------------------------
 
-/// Default folder for clips dragged out of the Waveform: `<Documents>\re-minimeter\clips`.
+/// Default folder for clips dragged out of the Waveform: `<Documents>\ShowMeterBeat\clips`.
 #[tauri::command]
 fn default_clip_dir(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
     let base = app.path().document_dir().or_else(|_| app.path().home_dir()).map_err(|e| e.to_string())?;
-    Ok(base.join("re-minimeter").join("clips").display().to_string())
+    Ok(base.join("ShowMeterBeat").join("clips").display().to_string())
 }
 
 #[tauri::command]
@@ -601,7 +607,7 @@ fn ensure_dir(path: String) -> Result<(), String> {
 /// Writes the drag preview image (app icon) to the temp folder and returns its path.
 #[tauri::command]
 fn clip_drag_icon() -> Result<String, String> {
-    let dir = std::env::temp_dir().join("re-minimeter");
+    let dir = std::env::temp_dir().join("ShowMeterBeat");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let p = dir.join("drag-icon.png");
     if !p.exists() {
@@ -668,5 +674,5 @@ pub fn run() {
             set_opacity, set_appbar, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])
         .run(tauri::generate_context!())
-        .expect("error while running re-minimeter");
+        .expect("error while running ShowMeterBeat");
 }

@@ -2,7 +2,7 @@
 //! Usage: `cargo run --release --example punch -- <file-or-dir> [...]`
 //! Prints one line per hit: punch dB · attack ms · flash · sparkle/spread/width/tail · peak dBFS.
 
-use re_minimeter_lib::audio::punch::PunchMeter;
+use showmeterbeat_lib::audio::punch::PunchMeter;
 use std::path::{Path, PathBuf};
 
 fn collect(p: &Path, out: &mut Vec<PathBuf>) {
@@ -28,7 +28,7 @@ fn main() {
     }
     println!("{:<52} {:>7} {:>6} {:>6} {:>5} {:>5} {:>5} {:>5} {:>5} {:>7}", "file", "punch", "body", "attack", "flash", "spark", "sprd", "width", "tail", "peak");
     for f in &files {
-        let d = match re_minimeter_lib::audio::decode::decode(f.to_str().unwrap(), 30.0) {
+        let d = match showmeterbeat_lib::audio::decode::decode(f.to_str().unwrap(), 30.0) {
             Ok(d) => d,
             Err(e) => {
                 println!("{:<52} decode error: {e}", f.file_name().unwrap().to_string_lossy());

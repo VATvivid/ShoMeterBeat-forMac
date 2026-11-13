@@ -2,7 +2,7 @@
 //! utterances (≥ 0.6 s, cut after 400 ms of silence or at 10 s); each utterance is
 //! transcribed on a worker thread holding the loaded ggml model. Off → zero cost.
 //! Models (`ggml-base.bin`, `ggml-small.bin`, MIT, from ggerganov/whisper.cpp) are looked
-//! up in the app's models dir and in `%APPDATA%\re-minimeter\models`.
+//! up in the app's models dir and in `%APPDATA%\ShowMeterBeat\models`.
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -192,7 +192,7 @@ impl SubtitleState {
     }
 }
 
-/// Model file lookup: `<models_dir>/ggml-<name>.bin`, then `%APPDATA%\re-minimeter\models`.
+/// Model file lookup: `<models_dir>/ggml-<name>.bin`, then `%APPDATA%\ShowMeterBeat\models`.
 pub fn find_model(models_dir: &Option<PathBuf>, name: &str) -> Option<PathBuf> {
     let file = format!("ggml-{name}.bin");
     let mut cands: Vec<PathBuf> = Vec::new();
@@ -200,7 +200,8 @@ pub fn find_model(models_dir: &Option<PathBuf>, name: &str) -> Option<PathBuf> {
         cands.push(d.join(&file));
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
-        cands.push(PathBuf::from(appdata).join("re-minimeter").join("models").join(&file));
+        cands.push(PathBuf::from(&appdata).join("ShowMeterBeat").join("models").join(&file));
+        cands.push(PathBuf::from(&appdata).join("re-minimeter").join("models").join(&file)); // pre-rename folder
     }
     cands.push(PathBuf::from("src-tauri").join("models").join(&file));
     cands.into_iter().find(|p| p.exists())
@@ -240,7 +241,7 @@ pub fn start(state: Arc<Mutex<SubtitleState>>, models_dir: Option<PathBuf>) {
                 if ctx.as_ref().map(|(n, _)| n != &model).unwrap_or(true) {
                     let Some(path) = find_model(&models_dir, &model) else {
                         let mut s = state.lock();
-                        s.status.error = Some(format!("모델 없음: ggml-{model}.bin — scripts/fetch_models.py --whisper {model} 또는 %APPDATA%\\re-minimeter\\models 에 넣으세요"));
+                        s.status.error = Some(format!("모델 없음: ggml-{model}.bin — scripts/fetch_models.py --whisper {model} 또는 %APPDATA%\\ShowMeterBeat\\models 에 넣으세요"));
                         s.status.loaded = false;
                         std::thread::sleep(Duration::from_secs(2));
                         continue;

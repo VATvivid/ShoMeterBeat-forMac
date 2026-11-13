@@ -60,7 +60,7 @@ export function applyPresetState(p: Preset) {
 }
 
 export function presetToJson(name: string, p: Preset): string {
-  return JSON.stringify({ app: "re-minimeter", kind: "preset", name, preset: p }, null, 2);
+  return JSON.stringify({ app: "ShowMeterBeat", kind: "preset", name, preset: p }, null, 2);
 }
 
 export function presetFromJson(text: string): { name: string; preset: Preset } {

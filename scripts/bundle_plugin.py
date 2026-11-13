@@ -7,7 +7,7 @@ import os, shutil, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CRATE = os.path.join(ROOT, "crates", "rm-send-plugin")
-NAME = "re-minimeter Send"
+NAME = "ShowMeterBeat Send"
 OUT = os.path.join(ROOT, "src-tauri", "plugins")
 
 if "--no-build" not in sys.argv:

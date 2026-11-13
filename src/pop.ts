@@ -11,7 +11,7 @@ import { applyOpacity, flashAll, forgetPop, saveWindowPrefs, setAlwaysOnTop, upd
 let closing = false;
 
 export function initPop(grid: Grid) {
-  document.title = "re-minimeter 창";
+  document.title = "ShowMeterBeat 창";
   const zone = document.createElement("div");
   zone.id = "pop-zone";
   const bar = document.createElement("header");
@@ -19,7 +19,7 @@ export function initPop(grid: Grid) {
   const drag = document.createElement("span");
   drag.className = "pop-drag";
   drag.setAttribute("data-tauri-drag-region", "");
-  drag.textContent = "⋮⋮ re-minimeter";
+  drag.textContent = "⋮⋮ ShowMeterBeat";
   const prefs = windowPrefs();
 
   const pin = document.createElement("button");

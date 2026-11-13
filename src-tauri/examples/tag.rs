@@ -7,16 +7,16 @@ use std::time::Duration;
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: tag <file>");
-    let d = re_minimeter_lib::audio::decode::decode(&path, 30.0).expect("decode");
-    let dir = re_minimeter_lib::audio::tagger::model_dir(None).expect("models dir (run scripts/fetch_models.py)");
+    let d = showmeterbeat_lib::audio::decode::decode(&path, 30.0).expect("decode");
+    let dir = showmeterbeat_lib::audio::tagger::model_dir(None).expect("models dir (run scripts/fetch_models.py)");
     println!("models: {}", dir.display());
-    let state = Arc::new(Mutex::new(re_minimeter_lib::audio::tagger::TaggerState::new()));
+    let state = Arc::new(Mutex::new(showmeterbeat_lib::audio::tagger::TaggerState::new()));
     {
         let mut s = state.lock();
         s.enabled = true;
         s.interval = Duration::from_millis(100);
     }
-    re_minimeter_lib::audio::tagger::start(state.clone(), Some(dir));
+    showmeterbeat_lib::audio::tagger::start(state.clone(), Some(dir));
     // wait for the model
     for _ in 0..200 {
         std::thread::sleep(Duration::from_millis(50));

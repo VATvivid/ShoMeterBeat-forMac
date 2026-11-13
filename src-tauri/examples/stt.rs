@@ -9,15 +9,15 @@ fn main() {
     let path = std::env::args().nth(1).expect("usage: stt <file> [lang] [model]");
     let lang = std::env::args().nth(2).unwrap_or_else(|| "auto".into());
     let model = std::env::args().nth(3).unwrap_or_else(|| "base".into());
-    let d = re_minimeter_lib::audio::decode::decode(&path, 60.0).expect("decode");
-    let state = Arc::new(Mutex::new(re_minimeter_lib::audio::subtitle::SubtitleState::new()));
+    let d = showmeterbeat_lib::audio::decode::decode(&path, 60.0).expect("decode");
+    let state = Arc::new(Mutex::new(showmeterbeat_lib::audio::subtitle::SubtitleState::new()));
     {
         let mut s = state.lock();
         s.enabled = true;
         s.lang = lang;
         s.model = model;
     }
-    re_minimeter_lib::audio::subtitle::start(state.clone(), Some(std::path::PathBuf::from("models")));
+    showmeterbeat_lib::audio::subtitle::start(state.clone(), Some(std::path::PathBuf::from("models")));
     let ch = d.channels;
     let frames = d.frames();
     let per = d.sample_rate as usize / 10; // 100 ms chunks, fed faster than real time

@@ -80,7 +80,7 @@ async function openPopWindow(e: PopWin) {
   const scale = (await api.getCurrentWindow().scaleFactor().catch(() => 1)) || 1;
   const win = new WebviewWindow(e.label, {
     url: `index.html?win=${encodeURIComponent(e.label)}`,
-    title: "re-minimeter 창",
+    title: "ShowMeterBeat 창",
     x: e.x / scale, y: e.y / scale, width: e.w / scale, height: e.h / scale,
     minWidth: 160, minHeight: 100,
     decorations: false, alwaysOnTop: e.pinned, theme: "dark", focus: true, transparent: true,

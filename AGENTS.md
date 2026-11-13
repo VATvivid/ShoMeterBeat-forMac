@@ -1,4 +1,4 @@
-# AGENTS.md — re-minimeter
+# AGENTS.md — ShowMeterBeat
 
 Windows용 시스템 오디오 비주얼 아날라이저 + EBU R128 라우드니스 미터. Tauri 2(Rust 엔진) + Vite/TypeScript(캔버스 UI).
 
@@ -16,7 +16,7 @@ src-tauri/src/audio/loudness.rs ebur128 (M/S/I/LRA/True Peak)
 src-tauri/src/audio/voice.rs    LPC(14차, 4× 데시메이션) 포먼트 F1~F3 + 자기상관 피치/유성음 판정, 40 Hz 갱신
 src-tauri/src/audio/recorder.rs hound WAV(32-bit float) 녹음 — 임시 폴더에 쓰고 저장 시 이동
 crates/rm-shm/                  공유 메모리 브리지(Local\re-minimeter-bridge-v1, 슬롯 8개 링 버퍼, 선형 리샘플) — 앱과 플러그인이 공유
-crates/rm-send-plugin/          nih-plug CLAP+VST3 "re-minimeter Send" (통과 + 브리지에 사본 쓰기). 빌드: npm run plugin
+crates/rm-send-plugin/          nih-plug CLAP+VST3 "ShowMeterBeat Send" (통과 + 브리지에 사본 쓰기). 빌드: npm run plugin
 src-tauri/plugins/              bundle_plugin.py가 만든 .clap / .vst3 (git 제외, NSIS 리소스로 포함)
                                 소스 모드(audio/mod.rs Mode): Auto=루프백+플러그인 합산(기본) / Output / Input / Plugin
 src/engine/source.ts            Tauri면 invoke('frame'), 아니면 합성 신호(브라우저 개발용)

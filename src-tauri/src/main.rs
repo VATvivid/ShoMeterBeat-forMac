@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    re_minimeter_lib::run()
+    showmeterbeat_lib::run()
 }

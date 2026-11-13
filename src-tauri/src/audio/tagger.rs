@@ -192,7 +192,7 @@ pub fn start(state: Arc<Mutex<TaggerState>>, dir: Option<PathBuf>) {
             // ONNX Runtime is loaded at run time from models/onnxruntime.dll (no link-time dependency).
             let dll = dir.join("onnxruntime.dll");
             let env = match ort::init_from(&dll) {
-                Ok(b) => match b.with_name("re-minimeter").build() {
+                Ok(b) => match b.with_name("ShowMeterBeat").build() {
                     Ok(env) => env,
                     Err(e) => {
                         state.lock().status.error = Some(format!("ONNX Runtime 초기화 실패: {e}"));

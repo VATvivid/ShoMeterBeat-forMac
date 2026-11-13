@@ -220,14 +220,14 @@ class MockSource implements Source {
     ];
   }
   async setSource() {}
-  async installPlugins() { return ["(mock) %LOCALAPPDATA%\Programs\Common\CLAP\re-minimeter Send.clap"]; }
+  async installPlugins() { return ["(mock) %LOCALAPPDATA%\Programs\Common\CLAP\ShowMeterBeat Send.clap"]; }
   async resetLoudness() { this.integ = -16; }
   async status(): Promise<Status> { return { device: "합성 신호", kind: "output", mode: "auto", plugins: 1, sample_rate: 48000, channels: 2, running: true, error: null }; }
   async recStart() { this.recAt = performance.now(); }
   async recStop() { this.recAt = null; return "(mock).wav"; }
   async recSave() {}
   async recDiscard() {}
-  async recDefaultName() { return "re-minimeter_mock.wav"; }
+  async recDefaultName() { return "ShowMeterBeat_mock.wav"; }
   private wcols: number[] = [];
   private whead = 0;
   async waveOverview(seconds: number): Promise<WaveOverview | null> {

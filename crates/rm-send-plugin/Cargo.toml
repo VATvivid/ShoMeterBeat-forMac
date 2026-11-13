@@ -2,7 +2,7 @@
 name = "rm-send-plugin"
 version = "0.1.0"
 edition = "2021"
-description = "re-minimeter Send — passes audio through and streams a copy to the re-minimeter app"
+description = "ShowMeterBeat Send — passes audio through and streams a copy to the ShowMeterBeat app"
 # NOTE: the VST3 export (nih-plug's vst3-sys wrapper) is GPLv3; CLAP export is ISC.
 
 [lib]

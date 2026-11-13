@@ -1,5 +1,5 @@
 [package]
-name = "re-minimeter"
+name = "showmeterbeat"
 version = "0.1.0"
 description = "System-audio visual analyzer and loudness meter for Windows"
 authors = ["VATvivid"]
@@ -7,7 +7,7 @@ edition = "2021"
 rust-version = "1.80"
 
 [lib]
-name = "re_minimeter_lib"
+name = "showmeterbeat_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

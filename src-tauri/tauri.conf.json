@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "re-minimeter",
+  "productName": "ShowMeterBeat",
   "version": "0.1.0",
   "identifier": "com.vatvivid.re-minimeter",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "re-minimeter",
+        "title": "ShowMeterBeat",
         "width": 1280,
         "height": 800,
         "minWidth": 640,

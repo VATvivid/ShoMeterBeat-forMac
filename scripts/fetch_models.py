@@ -1,4 +1,4 @@
-"""Download the AI models used by re-minimeter into src-tauri/models/ (gitignored).
+"""Download the AI models used by ShowMeterBeat into src-tauri/models/ (gitignored).
 
   python -I -X utf8 scripts/fetch_models.py                 # YAMNet ONNX + class map + ONNX Runtime
   python -I -X utf8 scripts/fetch_models.py --whisper small # + whisper ggml model (base|small|medium)
@@ -11,7 +11,7 @@ import os, subprocess, sys, tempfile, zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DST = os.path.join(ROOT, "src-tauri", "models")
-CURL = ["curl", "-L", "--ssl-no-revoke", "--retry", "3", "-A", "re-minimeter"]
+CURL = ["curl", "-L", "--ssl-no-revoke", "--retry", "3", "-A", "ShowMeterBeat"]
 
 FILES = {
     "yamnet.onnx": "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet.onnx",

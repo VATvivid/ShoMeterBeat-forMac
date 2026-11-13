@@ -1,5 +1,5 @@
-//! re-minimeter Send: a transparent insert that copies its input to the shared-memory
-//! bridge so the standalone re-minimeter app can analyze DAW audio (ASIO or not).
+//! ShowMeterBeat Send: a transparent insert that copies its input to the shared-memory
+//! bridge so the standalone ShowMeterBeat app can analyze DAW audio (ASIO or not).
 
 use nih_plug::prelude::*;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ impl Default for Send {
 }
 
 impl Plugin for Send {
-    const NAME: &'static str = "re-minimeter Send";
+    const NAME: &'static str = "ShowMeterBeat Send";
     const VENDOR: &'static str = "VATvivid";
     const URL: &'static str = "https://github.com/VATvivid/re-minimeter";
     const EMAIL: &'static str = "";
@@ -59,7 +59,7 @@ impl Plugin for Send {
             Some(w) => w.set_sample_rate(sr),
             None => match rm_shm::Writer::claim(sr) {
                 Ok(w) => self.writer = Some(w),
-                Err(e) => nih_log!("re-minimeter Send: {e}"),
+                Err(e) => nih_log!("ShowMeterBeat Send: {e}"),
             },
         }
         true
@@ -94,7 +94,7 @@ impl Plugin for Send {
 
 impl ClapPlugin for Send {
     const CLAP_ID: &'static str = "com.vatvivid.re-minimeter.send";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Streams audio to the re-minimeter analyzer app");
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Streams audio to the ShowMeterBeat analyzer app");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Utility, ClapFeature::Analyzer];

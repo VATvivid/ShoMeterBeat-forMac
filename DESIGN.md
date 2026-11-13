@@ -1,4 +1,4 @@
-# Design System — re-minimeter
+# Design System — ShowMeterBeat
 
 A desktop audio visual analyzer for Windows. The look is a dark, instrument-like
 surface in the spirit of compact system-audio analyzers and broadcast loudness

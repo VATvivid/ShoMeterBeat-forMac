@@ -53,7 +53,7 @@ export class WaveformModule implements Module {
       { type: "select", label: "AI 간격", value: String(this.aiInterval), options: [500, 1000, 2000].map((v) => ({ value: String(v), label: `${v / 1000} s` })), onChange: (v) => setModSetting(this.id, "aiInterval", Number(v)) },
       { type: "select", label: "AI 필터", value: this.aiFilter, options: [{ value: "all", label: "전체" }, ...(Object.keys(GROUP_LABEL) as TagGroup[]).map((g) => ({ value: g, label: GROUP_LABEL[g] }))], onChange: (v) => setModSetting(this.id, "aiFilter", v) },
       { type: "range", label: "AI 최소 점수", value: this.aiMin, min: 0.05, max: 0.7, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "aiMin", v) },
-      { type: "action", label: `DAW 끌어놓기 클립 폴더 변경… (${modSetting(this.id, "clipDir", "") || "문서/re-minimeter/clips"})`, onClick: () => this.chooseClipDir() },
+      { type: "action", label: `DAW 끌어놓기 클립 폴더 변경… (${modSetting(this.id, "clipDir", "") || "문서/ShowMeterBeat/clips"})`, onClick: () => this.chooseClipDir() },
     ];
   }
 
@@ -165,7 +165,7 @@ export class WaveformModule implements Module {
       const start = Math.round(head - (this.seconds - t0) * sr);
       if (!inTauri) { this.setNote("브라우저 미리보기에서는 저장할 수 없습니다"); return; }
       const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
-      const dst = await saveDialog({ title: "선택 구간 WAV 저장", defaultPath: `re-minimeter_clip_${stamp}.wav`, filters: [{ name: "WAV", extensions: ["wav"] }] });
+      const dst = await saveDialog({ title: "선택 구간 WAV 저장", defaultPath: `ShowMeterBeat_clip_${stamp}.wav`, filters: [{ name: "WAV", extensions: ["wav"] }] });
       if (!dst) return;
       const n = await getSource()!.waveExport(Math.max(0, start), Math.max(0, end), dst);
       this.setNote(`저장됨: ${(n / sr).toFixed(2)} s → ${dst}`);
@@ -209,7 +209,7 @@ export class WaveformModule implements Module {
       const start = Math.round(head - (this.seconds - t0) * sr);
       const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
       const dir = await this.clipFolder();
-      const dst = `${dir}\\re-minimeter_clip_${stamp}.wav`;
+      const dst = `${dir}\\ShowMeterBeat_clip_${stamp}.wav`;
       await getSource()!.waveExport(Math.max(0, start), Math.max(0, end), dst);
       const icon = await invoke<string>("clip_drag_icon");
       const { startDrag } = await import("@crabnebula/tauri-plugin-drag");

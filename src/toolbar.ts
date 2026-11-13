@@ -291,7 +291,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       for (const d of ins) opt(gIn, srcKey("input", d.name), (d.default ? "기본 입력: " : "") + d.name);
     }
     const gPlug = group("DAW 플러그인");
-    opt(gPlug, srcKey("plugin", ""), "DAW 플러그인만 (re-minimeter Send)");
+    opt(gPlug, srcKey("plugin", ""), "DAW 플러그인만 (ShowMeterBeat Send)");
     const wanted = srcKey(settings.sourceMode, settings.device ?? "");
     const exists = [...deviceSel.options].some((o) => o.value === wanted);
     deviceSel.value = exists ? wanted : srcKey("auto", "");
@@ -311,9 +311,9 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
   // so a teammate has nothing to click after installing (the button stays for re-installs).
   if (inTauri) {
     try {
-      if (!localStorage.getItem("rm.plugins.installed.v1")) {
+      if (!localStorage.getItem("rm.plugins.installed.v2")) {
         source.installPlugins().then((paths) => {
-          try { localStorage.setItem("rm.plugins.installed.v1", new Date().toISOString()); } catch { /* ignore */ }
+          try { localStorage.setItem("rm.plugins.installed.v2", new Date().toISOString()); } catch { /* ignore */ }
           notice(`첫 실행: DAW 플러그인을 설치했습니다 → ${paths.join(" , ")} (DAW에서 플러그인 재스캔)`, "ok", 15000);
         }).catch((e) => notice(`플러그인 자동 설치 실패: ${String(e)} — 메뉴에서 다시 시도`, "err", 10000));
       }

@@ -22,7 +22,7 @@ pub struct RecInfo {
 }
 
 pub fn temp_dir() -> PathBuf {
-    let d = std::env::temp_dir().join("re-minimeter");
+    let d = std::env::temp_dir().join("ShowMeterBeat");
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -33,7 +33,7 @@ pub fn default_name() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    format!("re-minimeter_{secs}.wav")
+    format!("ShowMeterBeat_{secs}.wav")
 }
 
 impl Recorder {
