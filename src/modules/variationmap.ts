@@ -29,13 +29,15 @@ import { modSetting, setModSetting } from "../state";
 // ends when a hit repeats (red REPEAT flash), when the sound switches to another cluster
 // (fresh ×1), or when no hit arrives within 콤보 유지 시간 (default 3 s; the counter shows
 // the remaining time as a shrinking bar and fades out). Chains are not kept per cluster,
-// so coming back to an old sound never resumes an old count.
+// so coming back to an old sound never resumes an old count. Several onsets inside one
+// sound (within COMBO_MIN_GAP) count once, so one hit is one step.
 
 const N_DIM = 58;
 const N_VIEW = 70; // 12 band means + 48 shape + 4 spectral + zcr + 3 envelope + 2 level
 const GROUP_NAMES = ["음색", "시간", "세기"] as const;
 const GROUP_SHORT = ["음", "시", "세"];
 const POLL_MS = 200;
+const COMBO_MIN_GAP = 0.25; // onsets closer than this to the last counted hit are the same sound (swing + impact + ring) → one combo step
 const PALETTE = ["sig", "peak", "sig-2", "target", "clip", "fg-1", "sig", "peak"];
 
 /** Group of every view dimension: 0 timbre, 1 envelope, 2 level. */
@@ -284,7 +286,9 @@ export class VariationMapModule implements Module {
   /** Combo bookkeeping for the newest event (see the module comment). */
   private updateCombo(ev: Ev) {
     const repeat = ev.nearD <= this.similar;
-    const expired = this.clock - this.comboLastAt > this.comboHold;
+    const since = this.clock - this.comboLastAt;
+    if (since < COMBO_MIN_GAP) { this.burst = 1; return; } // sub-onset of the hit just counted
+    const expired = since > this.comboHold;
     let n: number;
     if (repeat) { n = 0; this.comboBreak = 1; this.lastRepeatAt = this.clock; }
     else if (ev.novNew || ev.cluster !== this.comboCluster || expired || this.combo === 0) { n = 1; this.comboBump = 0.5; }
