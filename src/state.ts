@@ -26,9 +26,9 @@ export const GRID_DIMS: Record<LayoutKind, { cols: number; rows: number }> = {
 };
 
 /** Effective grid size: base dims, extended to contain every visible tile. */
-export function effectiveDims(kind: LayoutKind, rects: Iterable<{ x: number; y: number; w: number; h: number }>): { cols: number; rows: number } {
+export function effectiveDims(kind: LayoutKind, rects: Iterable<{ x: number; y: number; w: number; h: number }>, extra = { cols: 0, rows: 0 }): { cols: number; rows: number } {
   const base = GRID_DIMS[kind];
-  let cols = base.cols, rows = base.rows;
+  let cols = base.cols + (kind === "dockv" ? 0 : extra.cols), rows = base.rows + (kind === "dockh" ? 0 : extra.rows);
   for (const r of rects) {
     if (kind !== "dockv") cols = Math.max(cols, r.x + r.w);
     if (kind !== "dockh") rows = Math.max(rows, r.y + r.h);
@@ -134,6 +134,15 @@ export function saveSettings() {
 
 export function saveLayout(kind: LayoutKind) {
   try { localStorage.setItem(LAYOUT_KEYS[kind], JSON.stringify(layouts[kind])); } catch { /* ignore */ }
+}
+
+/** Columns / rows added by the edit-mode "+" buttons (per layout key, persisted). */
+export function gridExtra(kind: LayoutKind): { cols: number; rows: number } {
+  const v = load<{ cols: number; rows: number }>(`${LAYOUT_KEYS[kind]}.extra`, { cols: 0, rows: 0 });
+  return { cols: Math.max(0, v.cols | 0), rows: Math.max(0, v.rows | 0) };
+}
+export function setGridExtra(kind: LayoutKind, v: { cols: number; rows: number }) {
+  try { localStorage.setItem(`${LAYOUT_KEYS[kind]}.extra`, JSON.stringify({ cols: Math.max(0, v.cols | 0), rows: Math.max(0, v.rows | 0) })); } catch { /* ignore */ }
 }
 
 export function resetLayout(kind: LayoutKind) {

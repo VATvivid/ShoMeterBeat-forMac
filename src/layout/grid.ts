@@ -1,17 +1,16 @@
 // Tile grid: absolute-positioned tiles snapped to a cols×rows grid (dimensions depend
 // on the layout kind: free grid, horizontal strip, vertical strip). In edit mode the
 // header drags (move) and the bottom-right handle resizes. Overlapping tiles are
-// pushed out of the way (down in the free grid / vertical strip, right in the
-// horizontal strip); the grid grows when needed — the free grid in both directions,
-// so a tile dragged past the right edge extends the grid by its own width (the window
-// stays, cells shrink). While dragging nothing moves — dashed guides show where pushed
-// tiles will land; they glide there on drop.
+// swapped with the one tile under the drop (default) or pushed out of the way; the grid
+// grows to contain every tile and, in edit mode, by the "+" buttons on its right / bottom
+// edge (the window stays, cells shrink). While dragging nothing moves — dashed guides
+// show where affected tiles will land; they glide there on drop.
 // A tile dragged out of the window is handed to `onXDrag` (cross-window move).
 // Right-click opens the module's settings menu.
 import type { Frame } from "../engine/frame";
 import { minSize, MODULES } from "../modules";
 import type { Module } from "../modules/types";
-import { effectiveDims, GRID_DIMS, layouts, saveLayout, saveSettings, settings, type Layout, type LayoutKind } from "../state";
+import { effectiveDims, GRID_DIMS, gridExtra, layouts, saveLayout, saveSettings, setGridExtra, settings, type Layout, type LayoutKind } from "../state";
 import { showContextMenu, type MenuAction } from "./contextmenu";
 
 interface Tile {
@@ -97,10 +96,6 @@ export function resolveSwap(layout: Layout, movingId: string, target: Rect, orig
   return out;
 }
 
-/** Edge zone (CSS px) inside the grid where a dragged tile grows the grid by one cell every GROW_MS. */
-const GROW_EDGE = 22;
-const GROW_MS = 380;
-
 export class Grid {
   private tiles = new Map<string, Tile>();
   private editing = false;
@@ -110,6 +105,7 @@ export class Grid {
   /** Resolved rects during a drag (null when idle) — shown as guides, applied on drop. */
   private preview: Record<string, Rect> | null = null;
   private guides: HTMLElement[] = [];
+  private growUi: HTMLElement[] = [];
 
   constructor(private root: HTMLElement) {
     this.ghost = document.createElement("div");
@@ -118,7 +114,49 @@ export class Grid {
     root.appendChild(this.ghost);
     new ResizeObserver(() => this.relayout()).observe(root);
     root.addEventListener("contextmenu", (e) => e.preventDefault());
+    this.buildGrowUi();
     this.sync();
+  }
+
+  /** Edit-mode "+ / −" buttons on the right (columns) and bottom (rows) edges. */
+  private buildGrowUi() {
+    const mk = (side: "cols" | "rows") => {
+      const box = document.createElement("div");
+      box.className = `grid-grow ${side}`;
+      const label = document.createElement("span");
+      const plus = document.createElement("button"); plus.className = "btn icon"; plus.textContent = "+"; plus.title = side === "cols" ? "열 추가" : "행 추가";
+      const minus = document.createElement("button"); minus.className = "btn icon"; minus.textContent = "−"; minus.title = side === "cols" ? "열 제거 (빈 열만)" : "행 제거 (빈 행만)";
+      const bump = (d: number) => {
+        const ex = gridExtra(this.kind);
+        ex[side] = Math.max(0, ex[side] + d);
+        setGridExtra(this.kind, ex);
+        this.root.classList.add("settling");
+        this.relayout();
+        setTimeout(() => this.root.classList.remove("settling"), 220);
+        this.updateGrowUi();
+      };
+      for (const b of [plus, minus]) b.addEventListener("pointerdown", (e) => e.stopPropagation());
+      plus.addEventListener("click", () => bump(1));
+      minus.addEventListener("click", () => bump(-1));
+      box.append(plus, label, minus);
+      this.root.appendChild(box);
+      return box;
+    };
+    this.growUi = [mk("cols"), mk("rows")];
+    this.updateGrowUi();
+  }
+
+  private updateGrowUi() {
+    const d = this.dims();
+    const ex = gridExtra(this.kind);
+    const [c, r] = this.growUi;
+    if (!c || !r) return;
+    c.style.display = this.kind === "dockv" ? "none" : "";
+    r.style.display = this.kind === "dockh" ? "none" : "";
+    (c.children[1] as HTMLElement).textContent = `${d.cols}열`;
+    (r.children[1] as HTMLElement).textContent = `${d.rows}행`;
+    (c.children[2] as HTMLButtonElement).disabled = ex.cols === 0;
+    (r.children[2] as HTMLButtonElement).disabled = ex.rows === 0;
   }
 
   get isEditing() { return this.editing; }
@@ -131,6 +169,7 @@ export class Grid {
     this.editing = on;
     this.root.classList.toggle("editing", on);
     document.body.classList.toggle("editing", on);
+    this.updateGrowUi();
   }
 
   /** Switch layout family (normal / dockh / dockv) and rebuild tiles. */
@@ -153,7 +192,7 @@ export class Grid {
   /** Grid size in cells: base dims grown to contain every tile (and the drag preview). */
   dims() {
     const rects = this.preview ? Object.values(this.preview) : Object.values(this.layout).filter((r) => r.on);
-    return effectiveDims(this.kind, rects);
+    return effectiveDims(this.kind, rects, gridExtra(this.kind));
   }
 
   private cell() {
@@ -179,6 +218,7 @@ export class Grid {
     this.root.style.setProperty("--cell-w", `${cw + GUTTER}px`);
     this.root.style.setProperty("--cell-h", `${ch + GUTTER}px`);
     for (const t of this.tiles.values()) this.place(t);
+    this.updateGrowUi();
   }
 
   private rectOf(id: string): Rect {
@@ -377,8 +417,7 @@ export class Grid {
       let next: Rect = { ...start };
       let outside = false;       // pointer left this window (cross-window move)
       let lastHover = 0;
-      const base = this.dims();
-      let growX = 0, growY = 0, lastGrowX = 0, lastGrowY = 0; // cells added by holding the tile at the right / bottom edge
+      const p0 = this.rectPx(start); // pixel origin frozen for the drag: the tile follows the pointer 1:1 even when cells rescale
       let valid = true;
       t.el.classList.add("dragging");
       t.el.style.zIndex = String(++this.z);
@@ -389,17 +428,8 @@ export class Grid {
         const dy = Math.round((ev.clientY - sy) / (ch + GUTTER));
         if (mode === "move") {
           next = { ...start, x: Math.max(0, Math.min(maxX - start.w, start.x + dx)), y: Math.max(0, Math.min(maxY - start.h, start.y + dy)) };
-          // Holding the tile against the grid's right / bottom edge grows the grid one cell at a time.
-          const rr = this.root.getBoundingClientRect();
-          const now = performance.now();
-          if (this.kind !== "dockv" && ev.clientX >= rr.right - GROW_EDGE && ev.clientX <= window.innerWidth) { if (now - lastGrowX > GROW_MS) { growX++; lastGrowX = now; } }
-          if (this.kind !== "dockh" && ev.clientY >= rr.bottom - GROW_EDGE && ev.clientY <= window.innerHeight) { if (now - lastGrowY > GROW_MS) { growY++; lastGrowY = now; } }
-          if (growX) next.x = Math.max(next.x, base.cols + growX - start.w);
-          if (growY) next.y = Math.max(next.y, base.rows + growY - start.h);
-          this.ghost.classList.toggle("grow", (growX > 0 && next.x + next.w > base.cols) || (growY > 0 && next.y + next.h > base.rows));
           // The dragged tile follows the pointer freely; everything else stays put.
-          const p = this.rectPx(start);
-          Object.assign(t.el.style, { left: `${p.left + (ev.clientX - sx)}px`, top: `${p.top + (ev.clientY - sy)}px` });
+          Object.assign(t.el.style, { left: `${p0.left + (ev.clientX - sx)}px`, top: `${p0.top + (ev.clientY - sy)}px` });
         } else {
           next = { ...start, w: Math.max(min.w, Math.min(maxX - start.x, start.w + dx)), h: Math.max(min.h, Math.min(maxY - start.y, start.h + dy)) };
         }
@@ -430,7 +460,7 @@ export class Grid {
         try { target.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
         t.el.classList.remove("dragging");
         this.ghost.style.display = "none";
-        this.ghost.classList.remove("invalid", "grow");
+        this.ghost.classList.remove("invalid");
         this.hideGuides();
         if (outside && ev.type === "pointerup") {
           // Dropped outside this window: hand the module to the window under the pointer.
