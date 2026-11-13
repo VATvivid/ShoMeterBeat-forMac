@@ -44,20 +44,6 @@ fn plugin_source_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|p| p.join(format!("{PLUGIN_NAME}.clap")).exists())
 }
 
-fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for e in std::fs::read_dir(src)? {
-        let e = e?;
-        let t = dst.join(e.file_name());
-        if e.file_type()?.is_dir() {
-            copy_dir(&e.path(), &t)?;
-        } else {
-            std::fs::copy(e.path(), t)?;
-        }
-    }
-    Ok(())
-}
-
 /// Copies the bundled CLAP/VST3 plugin into the per-user common plugin folders
 /// (no admin needed). Returns the destination paths.
 #[tauri::command]
