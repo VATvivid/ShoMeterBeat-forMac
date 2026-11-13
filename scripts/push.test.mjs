@@ -7,7 +7,7 @@ globalThis.getComputedStyle = () => ({ getPropertyValue: () => "#000000" });
 globalThis.ImageData = class { constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } };
 globalThis.ResizeObserver = class { observe() {} };
 const bundle = pathToFileURL(fileURLToPath(new URL("../node_modules/.smoke/push.js", import.meta.url))).href;
-const { resolvePush, resolveSwap } = await import(bundle);
+const { resolvePush } = await import(bundle);
 
 const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const noOverlaps = (r) => { const ids = Object.keys(r); for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (overlap(r[ids[i]], r[ids[j]])) return `${ids[i]}×${ids[j]}`; return null; };
@@ -44,24 +44,4 @@ L = { a: { x: 0, y: 0, w: 8, h: 4, on: true }, z: { x: 8, y: 0, w: 8, h: 4, on: 
 r = resolvePush(L, "a", { x: 8, y: 0, w: 8, h: 4 }, "normal");
 check("off ignored", !("z" in r));
 
-// ---- swap mode
-// 7) Drop on empty space: only the mover changes.
-L = { a: { x: 0, y: 0, w: 6, h: 4, on: true }, b: { x: 12, y: 0, w: 6, h: 4, on: true } };
-r = resolveSwap(L, "a", { x: 6, y: 4, w: 6, h: 4 }, L.a, "normal");
-check("swap: empty spot", r && !("b" in r) && r.a.x === 6 && r.a.y === 4);
-
-// 8) Drop onto exactly one tile: it takes the mover's old top-left, keeps its size, nothing else moves.
-L = { a: { x: 0, y: 0, w: 6, h: 4, on: true }, b: { x: 12, y: 0, w: 4, h: 6, on: true }, c: { x: 0, y: 8, w: 6, h: 4, on: true } };
-r = resolveSwap(L, "a", { x: 12, y: 0, w: 6, h: 4 }, L.a, "normal");
-check("swap: one tile", r && noOverlaps({ ...L, ...r, c: L.c }) === null && r.b.x === 0 && r.b.y === 0 && r.b.w === 4 && r.b.h === 6 && !("c" in r));
-
-// 9) Two tiles under the drop → not allowed.
-L = { a: { x: 0, y: 0, w: 6, h: 4, on: true }, b: { x: 12, y: 0, w: 6, h: 4, on: true }, c: { x: 18, y: 0, w: 6, h: 4, on: true } };
-r = resolveSwap(L, "a", { x: 15, y: 0, w: 6, h: 4 }, L.a, "normal");
-check("swap: two under → null", r === null);
-
-// 10) Swapped tile would not fit at the mover's old spot (collides with another) → not allowed.
-L = { a: { x: 0, y: 0, w: 6, h: 4, on: true }, b: { x: 12, y: 0, w: 10, h: 4, on: true }, c: { x: 6, y: 0, w: 6, h: 4, on: true } };
-r = resolveSwap(L, "a", { x: 12, y: 0, w: 6, h: 4 }, L.a, "normal");
-check("swap: no room at origin → null", r === null);
 process.exit(bad ? 1 : 0);

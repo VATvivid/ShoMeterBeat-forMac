@@ -10,7 +10,7 @@
 import type { Frame } from "../engine/frame";
 import { baseOf, isInstance, minSize, MODULES, titleOf } from "../modules";
 import type { Module } from "../modules/types";
-import { effectiveDims, GRID_DIMS, gridExtra, layouts, saveLayout, saveSettings, setGridExtra, settings, type Layout, type LayoutKind } from "../state";
+import { effectiveDims, GRID_DIMS, gridExtra, layouts, saveLayout, setGridExtra, type Layout, type LayoutKind } from "../state";
 import { showContextMenu, type MenuAction } from "./contextmenu";
 
 interface Tile {
@@ -72,30 +72,6 @@ export function resolvePush(layout: Layout, movingId: string, target: Rect, kind
   return out;
 }
 
-/**
- * Swap placement: the mover goes to `target`; if exactly one tile lies under it, that tile
- * takes the mover's old top-left (keeping its own size) when it fits there without
- * touching anything else. Nothing else moves. Returns null when the drop is not allowed
- * (two or more tiles under it, or the swapped tile would not fit).
- */
-export function resolveSwap(layout: Layout, movingId: string, target: Rect, origin: Rect, kind: LayoutKind): Record<string, Rect> | null {
-  const others = Object.entries(layout).filter(([id, r]) => id !== movingId && r.on);
-  const under = others.filter(([, r]) => overlap(target, r));
-  const out: Record<string, Rect> = { [movingId]: { ...target } };
-  if (under.length === 0) return out;
-  if (under.length > 1) return null;
-  const [bid, b] = under[0];
-  const moved: Rect = { x: origin.x, y: origin.y, w: b.w, h: b.h };
-  if (kind === "dockh") moved.y = 0;
-  if (kind === "dockv") moved.x = 0;
-  const cols = kind === "normal" ? Math.max(GRID_DIMS.normal.cols, target.x + target.w) : GRID_DIMS[kind].cols;
-  if (moved.x + moved.w > cols && kind !== "normal") return null;
-  if (overlap(moved, target)) return null;
-  for (const [oid, r] of others) if (oid !== bid && overlap(moved, r)) return null;
-  out[bid] = moved;
-  return out;
-}
-
 export class Grid {
   private tiles = new Map<string, Tile>();
   private editing = false;
@@ -114,6 +90,8 @@ export class Grid {
     root.appendChild(this.ghost);
     new ResizeObserver(() => this.relayout()).observe(root);
     root.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Horizontal strip: the wheel scrolls sideways.
+    root.addEventListener("wheel", (e) => { if (this.kind === "dockh" && e.deltaY && root.scrollWidth > root.clientWidth) { root.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
     this.buildGrowUi();
     this.sync();
   }
@@ -198,7 +176,12 @@ export class Grid {
   private cell() {
     const { cols, rows } = this.dims();
     const W = this.root.clientWidth, H = this.root.clientHeight;
-    return { cw: (W - GUTTER * (cols - 1)) / cols, ch: (H - GUTTER * (rows - 1)) / rows, cols, rows };
+    // Dock strips keep the base cell size and scroll (the window is one thin strip; more
+    // modules must not squeeze the others). The free grid keeps fitting the window.
+    const base = GRID_DIMS[this.kind];
+    const fitCols = this.kind === "dockh" ? Math.min(cols, base.cols) : cols;
+    const fitRows = this.kind === "dockv" ? Math.min(rows, base.rows) : rows;
+    return { cw: (W - GUTTER * (fitCols - 1)) / fitCols, ch: (H - GUTTER * (fitRows - 1)) / fitRows, cols, rows };
   }
 
   private rectPx(r: Rect) {
@@ -312,7 +295,6 @@ export class Grid {
     const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
-      { label: settings.placeMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 겹침 허용)" : "배치 방식: 겹침 허용 ✓ (→ 자리 바꾸기)", onClick: () => { settings.placeMode = settings.placeMode === "swap" ? "free" : "swap"; saveSettings(); } },
       ...extra,
       { label: isInstance(id) ? "이 모듈 지우기" : "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
@@ -361,10 +343,8 @@ export class Grid {
       target = this.kind === "dockh" ? { x: d.cols, y: 0, ...size } : { x: 0, y: d.rows, ...size };
     }
     this.layout[id] = { ...target, on: true };
-    // 겹침 허용 (default): the new tile lands where asked and nothing else moves; swap mode
-    // keeps the old behaviour of pushing colliding tiles aside so the new one gets its own room.
-    const resolved = settings.placeMode === "swap" ? resolvePush(this.layout, id, target, this.kind) : { [id]: { ...target } };
-    for (const [oid, r] of Object.entries(resolved)) Object.assign(this.layout[oid], r);
+    // 겹침 허용: the new tile lands where asked and nothing else moves.
+    Object.assign(this.layout[id], target);
     saveLayout(this.kind);
     this.root.classList.add("settling");
     this.sync();
@@ -423,7 +403,6 @@ export class Grid {
       let outside = false;       // pointer left this window (cross-window move)
       let lastHover = 0;
       const p0 = this.rectPx(start); // pixel origin frozen for the drag: the tile follows the pointer 1:1 even when cells rescale
-      let valid = true;
       t.el.classList.add("dragging");
       t.el.style.zIndex = String(++this.z);
       this.ghost.style.display = "block";
@@ -448,14 +427,8 @@ export class Grid {
           return;
         }
         if (outside) { outside = false; this.ghost.style.display = "block"; this.onXDrag?.leave(); }
-        // move: free (default) → the tile goes where it is dropped, overlapping allowed, nothing else moves;
-        //       swap → exchange with the one tile under it (null = not allowed → red ghost, snap back).
-        // resize always just resizes (overlap allowed). resolvePush is only used when a module is added.
-        const lm = settings.placeMode === "swap" ? "swap" : "free";
-        const swap = mode === "move" && lm === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
-        valid = !(mode === "move" && lm === "swap" && swap === null);
-        this.ghost.classList.toggle("invalid", !valid);
-        const resolved = swap ?? { [t.id]: { ...next } };
+        // 겹침 허용: the tile goes where it is dropped (move or resize), nothing else moves.
+        const resolved = { [t.id]: { ...next } };
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
         this.showGuides(resolved, t.id);
@@ -487,7 +460,6 @@ export class Grid {
           return;
         }
         if (outside) { this.onXDrag?.leave(); this.preview = null; this.place(t); return; }
-        if (!valid) { this.preview = null; this.place(t); return; } // swap mode: nowhere to put the tile under it — snap back
         const resolved = this.preview ?? resolvePush(this.layout, t.id, next, this.kind);
         this.preview = null;
         for (const [id, r] of Object.entries(resolved)) Object.assign(this.layout[id], r);

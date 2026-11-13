@@ -410,6 +410,61 @@ fn hwnd_of<W: raw_window_handle::HasWindowHandle>(w: &W) -> Option<isize> {
     }
 }
 
+/// Dock as a Windows application desktop toolbar (AppBar): the strip reserves its edge of
+/// the work area, so maximised windows and the taskbar's neighbours move out of its way —
+/// what MiniMeters does. `edge` 0 left / 1 top / 2 right / 3 bottom, `None` removes the
+/// reservation. Returns the rect the shell granted (physical px), which the window should
+/// take. The monitor is the one the window is on; ABM_QUERYPOS keeps clear of other appbars.
+#[tauri::command]
+fn set_appbar(window: tauri::Window, edge: Option<u32>, thickness: u32) -> Result<Option<[i32; 4]>, String> {
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use windows_sys::Win32::Foundation::{HWND, RECT};
+        use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+        use windows_sys::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
+        static REGISTERED: AtomicBool = AtomicBool::new(false);
+        let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")? as HWND;
+        let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, uCallbackMessage: 0, uEdge: 0, rc: RECT { left: 0, top: 0, right: 0, bottom: 0 }, lParam: 0 };
+        unsafe {
+            let Some(e) = edge else {
+                if REGISTERED.swap(false, Ordering::SeqCst) {
+                    SHAppBarMessage(ABM_REMOVE, &mut abd);
+                }
+                return Ok(None);
+            };
+            if !REGISTERED.swap(true, Ordering::SeqCst) {
+                SHAppBarMessage(ABM_NEW, &mut abd);
+            }
+            let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut mi: MONITORINFO = std::mem::zeroed();
+            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(hmon, &mut mi) == 0 {
+                return Err("모니터 정보를 읽지 못했습니다".into());
+            }
+            let t = thickness.max(1) as i32;
+            let fit = |rc: &mut RECT, e: u32| match e {
+                x if x == ABE_TOP => rc.bottom = rc.top + t,
+                x if x == ABE_BOTTOM => rc.top = rc.bottom - t,
+                x if x == ABE_LEFT => rc.right = rc.left + t,
+                _ => rc.left = rc.right - t,
+            };
+            abd.uEdge = match e { 0 => ABE_LEFT, 1 => ABE_TOP, 2 => ABE_RIGHT, _ => ABE_BOTTOM };
+            abd.rc = mi.rcMonitor;
+            fit(&mut abd.rc, abd.uEdge);
+            SHAppBarMessage(ABM_QUERYPOS, &mut abd); // the shell moves the rect clear of other appbars
+            fit(&mut abd.rc, abd.uEdge);
+            SHAppBarMessage(ABM_SETPOS, &mut abd);
+            Ok(Some([abd.rc.left, abd.rc.top, abd.rc.right, abd.rc.bottom]))
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, edge, thickness);
+        Ok(None)
+    }
+}
+
 /// Whole-window opacity 0–1 (WS_EX_LAYERED + LWA_ALPHA). 1.0 removes the layered style
 /// again so a fully opaque window pays no composition cost.
 #[tauri::command]
@@ -624,7 +679,7 @@ pub fn run() {
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
             events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status,
             punch_hits_since, punch_status, punch_reset,
-            set_opacity, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
+            set_opacity, set_appbar, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running re-minimeter");

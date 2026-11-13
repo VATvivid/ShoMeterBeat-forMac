@@ -1,6 +1,7 @@
 // Dock mode: pin the window to a screen edge as one strip (MiniMeters-style).
 // Uses the Tauri window API when available; in the browser preview only the layout
 // kind changes.
+import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./engine/source";
 import { layoutKindFor, saveSettings, settings, type DockMode } from "./state";
 
@@ -20,6 +21,8 @@ export async function applyDock(mode: DockMode) {
   if (!inTauri) return;
   const { api, w } = await win();
   if (mode === "none") {
+    await invoke("set_appbar", { edge: null, thickness: 0 }).catch(() => {});
+    await w.setMinSize(new api.LogicalSize(640, 400)).catch(() => {});
     await w.setAlwaysOnTop(settings.alwaysOnTop);
     await w.setDecorations(true);
     try {
@@ -50,10 +53,23 @@ export async function applyDock(mode: DockMode) {
   else if (mode === "bottom") { y = wa.position.y + wa.size.height - thick; height = thick; }
   else if (mode === "left") width = thick;
   else { x = wa.position.x + wa.size.width - thick; width = thick; }
+  // Reserve the edge as an AppBar (Windows): other windows then keep clear of the strip,
+  // and the shell hands back the exact rect to use (already clear of the taskbar).
+  const edge = { left: 0, top: 1, right: 2, bottom: 3 }[mode];
+  const rc = await invoke<[number, number, number, number] | null>("set_appbar", { edge, thickness: thick }).catch(() => null);
+  if (rc) { x = rc[0]; y = rc[1]; width = rc[2] - rc[0]; height = rc[3] - rc[1]; }
+  await w.setMinSize(null).catch(() => {}); // the strip may be thinner than the normal minimum
   await w.setDecorations(false);
   await w.setAlwaysOnTop(true);
   await w.setSize(new api.PhysicalSize(width, height));
   await w.setPosition(new api.PhysicalPosition(x, y));
+  // Undecorated windows can land a few px off (frame compensation): measure and nudge once.
+  try {
+    const p = await w.outerPosition(), s = await w.outerSize();
+    const dx = x - p.x, dy = y - p.y, dw = width - s.width, dh = height - s.height;
+    if (dx || dy) await w.setPosition(new api.PhysicalPosition(x + dx, y + dy));
+    if (dw || dh) await w.setSize(new api.PhysicalSize(width + dw, height + dh));
+  } catch { /* ignore */ }
 }
 
 export function dockLayoutKind() {

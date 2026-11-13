@@ -139,7 +139,7 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
 
 /* Context menu (tile settings) */
 .ctxmenu {
-  position: fixed; z-index: 3100; min-width: 220px; max-width: 320px;
+  position: fixed; z-index: 3100; min-width: 220px; max-width: 320px; max-height: calc(100vh - 8px); overflow-y: auto;
   background: var(--bg-3); border: 1px solid var(--line); border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 4px; font-size: 11px;
 }
@@ -178,6 +178,8 @@ body.docked .btn { height: 22px; padding: 0 7px; }
 body.docked select { height: 22px; min-width: 120px; max-width: 200px; }
 body.docked .app-name { display: none; }
 body.docked #grid { margin: 4px; }
+body[data-dock="top"] #grid, body[data-dock="bottom"] #grid { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+body[data-dock="left"] #grid, body[data-dock="right"] #grid { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 body.docked .tile-head { height: 18px; flex: 0 0 18px; font-size: 10px; }
 body.docked .tile-head .readout { display: none; }
 body.docked.dock-tiny .tile-head { display: none; }
