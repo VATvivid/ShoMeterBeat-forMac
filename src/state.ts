@@ -88,25 +88,27 @@ export function defaultLayout(kind: LayoutKind): Layout {
       spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false }, variation: { x: 0, y: 0, w: 1, h: 5, on: false }, subtitles: { x: 0, y: 0, w: 1, h: 4, on: false }, emoji: { x: 0, y: 0, w: 1, h: 3, on: false }, punch: { x: 0, y: 0, w: 1, h: 5, on: false },
     };
   }
+  // Default arrangement = the author's own layout, baked 2026-11-13 from the running app
+  // (사용자: "지금 내가 배치해둔 레이아웃을 기본 레이아웃으로"). Modules the user had off stay off.
   return {
-    spectrum: { x: 0, y: 0, w: 12, h: 7, on: true },
-    loudness: { x: 12, y: 0, w: 12, h: 7, on: true },
-    levels: { x: 0, y: 30, w: 3, h: 6, on: true },
-    scope: { x: 3, y: 30, w: 9, h: 6, on: true },
+    spectrum: { x: 0, y: 0, w: 10, h: 7, on: true },
+    loudness: { x: 10, y: 0, w: 11, h: 7, on: true },
+    levels: { x: 21, y: 0, w: 3, h: 7, on: true },
+    scope: { x: 12, y: 16, w: 3, h: 7, on: true },
     spectrogram: { x: 0, y: 7, w: 7, h: 9, on: true },
     stereo: { x: 7, y: 7, w: 4, h: 9, on: true },
     tract: { x: 11, y: 7, w: 4, h: 9, on: true },
     vowelmap: { x: 15, y: 7, w: 4, h: 9, on: true },
     pitch: { x: 19, y: 7, w: 5, h: 9, on: true },
     waveform: { x: 0, y: 16, w: 12, h: 7, on: true },
-    dynamics: { x: 12, y: 16, w: 3, h: 7, on: true },
+    dynamics: { x: 12, y: 23, w: 3, h: 7, on: true },
     stereobands: { x: 15, y: 16, w: 4, h: 7, on: true },
     transient: { x: 19, y: 16, w: 5, h: 7, on: true },
     player: { x: 0, y: 23, w: 12, h: 7, on: true },
-    variation: { x: 12, y: 23, w: 12, h: 7, on: true },
-    subtitles: { x: 12, y: 30, w: 12, h: 6, on: false },
-    emoji: { x: 0, y: 36, w: 4, h: 5, on: false },
-    punch: { x: 4, y: 36, w: 12, h: 7, on: false },
+    variation: { x: 15, y: 23, w: 9, h: 7, on: true },
+    subtitles: { x: 0, y: 30, w: 12, h: 7, on: true },
+    emoji: { x: 20, y: 30, w: 4, h: 7, on: true },
+    punch: { x: 12, y: 30, w: 8, h: 7, on: true },
   };
 }
 
