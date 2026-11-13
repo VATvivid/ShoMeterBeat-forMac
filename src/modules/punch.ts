@@ -109,6 +109,7 @@ export class PunchModule implements Module {
   private contactSet = false;             // fist frozen at the moment of contact (later 강도 updates must not move it)
   private sparks: { x: number; y: number; vx: number; vy: number; life: number; max: number; col: string; w: number; h: number; rot: number; vr: number }[] = [];
   private preAt = -10;          // clock of the last early trigger (refractory + match window)
+  private lastHitAt = -10;      // clock of the last engine hit (sub-onsets of one sound arrive < 0.3 s apart)
   // punching machine
   private tower = 0;            // lit fraction 0…1 (rises fast, holds, falls)
   private towerTarget = 0;
@@ -234,9 +235,11 @@ export class PunchModule implements Module {
     // measured the attack, which reads as a beat late. The per-frame punchM jumps the moment
     // the transient starts, so a rise of PRE_EDGE_DB over its slow average fires the punch
     // right away with a provisional 강도; the real hit (below) only re-scales it.
-    const edge = target > this.liveSlow + PRE_EDGE_DB && target > IDX_LO && this.clock - this.preAt > 0.15;
+    // One sound = one punch: no re-fire while a punch is in flight, and not within 0.3 s of the
+    // last trigger (punchM steps up several times inside one hit; 2026-11-13 "여러 번 움직임")
+    const edge = target > this.liveSlow + PRE_EDGE_DB && target > IDX_LO && this.jab <= 0 && this.clock - this.preAt > 0.3 && this.clock - this.lastHitAt > 0.3;
     this.liveSlow += (target - this.liveSlow) * Math.min(1, dt * 3);
-    if (edge && this.jab < 0.6) {
+    if (edge) {
       this.preAt = this.clock;
       this.hitPow = Math.max(0.15, this.index(target) / 100);
       this.jab = 1;
@@ -265,22 +268,26 @@ export class PunchModule implements Module {
       // punch motion + impact: wind-up, thrust, contact burst, tile shake and digit pop,
       // all scaled by the hit's 강도 (a weak tap barely nudges, a KO hit rocks the tile)
       this.hitPow = idx / 100;
+      // engine hits closer than 0.3 s are sub-onsets of the same sound: re-scale only, no new
+      // swing and no second spark burst. A hit within 0.8 s of an early trigger belongs to it.
+      const newSound = this.clock - this.lastHitAt > 0.3;
+      const ownsSwing = this.clock - this.preAt < 0.8 || this.jab > 0;
+      this.lastHitAt = this.clock;
       // 화려함 → sparks (from 48) and confetti (from 58) flying out of the fist
       const fl = last.flash / 100;
       const pal = flashPalette(fl, this.clock);
       const n = fl < 0.48 ? 0 : Math.round(8 + 40 * (fl - 0.48)), nc = fl >= 0.58 ? Math.round(8 + 30 * (fl - 0.58)) : 0;
       const sp = Math.max(30, this.fist.size) / 60;
-      for (let i = 0; i < n + nc; i++) {
+      for (let i = 0; i < (newSound ? n + nc : 0); i++) {
         const a = Math.random() * Math.PI * 2, v = (40 + 140 * Math.random()) * (0.5 + sp) * (0.6 + 0.6 * fl);
         const confetti = i >= n;
         this.sparks.push({ x: this.fist.x, y: this.fist.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40 * sp, life: 0, max: confetti ? 0.9 + Math.random() * 0.5 : 0.45 + Math.random() * 0.4, col: pal[Math.floor(Math.random() * pal.length)] ?? theme("target"), w: confetti ? 3 + 3 * sp : 1.5 + sp, h: confetti ? 5 + 4 * sp : 1.5 + sp, rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 12 });
       }
       while (this.sparks.length > 160) this.sparks.shift();
-      // a punch fired early for this hit is already in flight: keep its phase, just re-scale
-      if (!(this.clock - this.preAt < 0.45 && this.jab > 0)) { this.jab = 1; this.contactSet = false; }
+      // swing only when nothing already represents this sound (no early trigger, no punch in flight)
+      if (newSound && !ownsSwing) { this.jab = 1; this.contactSet = false; }
       this.scorePop = 1;
-      this.shakeDur = 0.15 + 0.35 * this.hitPow;
-      this.shakeT = this.shakeDur;
+      if (newSound) { this.shakeDur = 0.15 + 0.35 * this.hitPow; this.shakeT = this.shakeDur; }
       this.towerTarget = idx / 100;
       this.towerHold = 1.4;
       this.scoreTarget = this.score(last);
