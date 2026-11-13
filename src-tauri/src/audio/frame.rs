@@ -23,6 +23,8 @@
 //! +2*N_LISSA              LPC envelope [N_ENV] dB, 0..5 kHz linear
 //! +N_ENV                  stereo bands [2*N_BANDS]: (correlation, width) per band
 //!                         bands: <150 Hz, 150–600, 600–2.5k, 2.5k–20k
+//! +2*N_BANDS              spectrum M  [N_SPEC] dB   (mid = (L+R)/2)
+//! +N_SPEC                 spectrum S  [N_SPEC] dB   (side = (L−R)/2)
 //! ```
 
 pub const MAGIC: f32 = 7331.0;
@@ -69,6 +71,8 @@ pub struct Frame {
     pub lissa: Vec<f32>,
     pub envelope: Vec<f32>,
     pub bands: Vec<f32>,
+    pub spectrum_m: Vec<f32>,
+    pub spectrum_s: Vec<f32>,
 }
 
 impl Default for Frame {
@@ -106,13 +110,15 @@ impl Default for Frame {
             lissa: vec![0.0; 2 * N_LISSA],
             envelope: vec![SILENCE_DB; N_ENV],
             bands: vec![0.0; 2 * N_BANDS],
+            spectrum_m: vec![SILENCE_DB; N_SPEC],
+            spectrum_s: vec![SILENCE_DB; N_SPEC],
         }
     }
 }
 
 impl Frame {
     pub fn pack(&self) -> Vec<u8> {
-        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS;
+        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC;
         let mut v: Vec<f32> = Vec::with_capacity(total);
         v.extend_from_slice(&[
             MAGIC,
@@ -156,6 +162,8 @@ impl Frame {
         v.extend_from_slice(&self.lissa);
         v.extend_from_slice(&self.envelope);
         v.extend_from_slice(&self.bands);
+        v.extend_from_slice(&self.spectrum_m);
+        v.extend_from_slice(&self.spectrum_s);
         debug_assert_eq!(v.len(), total);
         let mut bytes = Vec::with_capacity(total * 4);
         for x in v {
@@ -175,7 +183,7 @@ mod tests {
         f.seq = 9;
         f.peak = [-3.0, -6.0];
         let b = f.pack();
-        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS));
+        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC));
         let at = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
         assert_eq!(at(0), MAGIC);
         assert_eq!(at(1), 9.0);

@@ -151,6 +151,7 @@ class MockSource implements Source {
       f.specL[i] = Math.max(SILENCE_DB, v);
       f.specR[i] = Math.max(SILENCE_DB, v - 1.5 + 2 * Math.sin(this.t * 1.3 + i * 0.1));
     }
+    for (let i = 0; i < N_SPEC; i++) { const l = Math.pow(10, f.specL[i] / 20), r = Math.pow(10, f.specR[i] / 20); f.specM[i] = 20 * Math.log10((l + r) / 2 + 1e-9); f.specS[i] = 20 * Math.log10(Math.abs(l - r) / 2 + 1e-9); }
     const amp = Math.pow(10, level / 20);
     for (let i = 0; i < N_SCOPE; i++) {
       this.phase += (2 * Math.PI * 110) / sr;

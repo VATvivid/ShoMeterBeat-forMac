@@ -177,7 +177,7 @@ body.docked #toolbar { height: 28px; flex: 0 0 28px; }
 body.docked .btn { height: 22px; padding: 0 7px; }
 body.docked select { height: 22px; min-width: 120px; max-width: 200px; }
 body.docked .app-name { display: none; }
-body.docked #grid { margin: 4px; }
+body.docked #grid { margin: 0; }
 body[data-dock="top"] #grid, body[data-dock="bottom"] #grid { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 body[data-dock="left"] #grid, body[data-dock="right"] #grid { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 body.docked .tile-head { height: 18px; flex: 0 0 18px; font-size: 10px; }

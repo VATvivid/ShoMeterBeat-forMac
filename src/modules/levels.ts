@@ -67,7 +67,7 @@ export class LevelsModule implements Module {
     const isLufs = this.mode === "lufs";
     for (let c = 0; c < 2; c++) {
       const target = v.main[c];
-      this.main[c] = isLufs ? target : ballistic(this.main[c], target, dt, this.mode === "rms" ? 20 : 30);
+      this.main[c] = isLufs ? target : ballistic(this.main[c], target, dt, this.mode === "rms" ? 18 : 24);
       if (v.under) this.under[c] = ballistic(this.under[c], v.under[c], dt, 20);
       if (target >= this.hold[c]) { this.hold[c] = target; this.holdAge[c] = 0; }
       else { this.holdAge[c] += dt; if (this.holdAge[c] > HOLD_S) this.hold[c] = ballistic(this.hold[c], target, dt, 30); }
@@ -106,34 +106,48 @@ export class LevelsModule implements Module {
       ctx.setLineDash([]);
     }
 
+    // Soft look: rounded tracks, a vertical gradient that warms toward the top (cool
+    // signal colour → warm near −12 → red in the clip zone), a translucent RMS core, and a
+    // hold line with a faint glow instead of a hard 2 px bar.
+    const rr = Math.min(4, barW / 2);
+    const roundRect = (x: number, y: number, w: number, hh: number, r: number) => { ctx.beginPath(); ctx.roundRect(x, y, w, Math.max(0, hh), r); };
     for (let c = 0; c < 2; c++) {
       const x = x0 + c * (barW + gap);
       ctx.fillStyle = theme("bg-3");
-      ctx.fillRect(x, y0, barW, ph);
+      roundRect(x, y0, barW, ph, rr); ctx.fill();
+      ctx.save();
+      roundRect(x, y0, barW, ph, rr); ctx.clip();
       if (v.under) {
         const yu = yOf(this.under[c]);
-        ctx.fillStyle = withAlpha(theme("sig"), 0.55);
+        ctx.fillStyle = withAlpha(theme("sig"), 0.35);
         ctx.fillRect(x, yu, barW, y1 - yu);
       }
       const ym = yOf(this.main[c]);
       const inner = v.under ? Math.min(3, barW * 0.25) : 0;
-      ctx.fillStyle = isLufs ? (c ? theme("sig-2") : theme("sig")) : theme("sig");
+      const g = ctx.createLinearGradient(0, y1, 0, y0);
+      const base = isLufs ? (c ? theme("sig-2") : theme("sig")) : theme("sig");
+      if (isLufs) {
+        const t = (settings.loudnessTarget - DB_BOTTOM) / (DB_TOP - DB_BOTTOM);
+        g.addColorStop(0, withAlpha(base, 0.75)); g.addColorStop(Math.max(0, t - 0.08), base); g.addColorStop(Math.min(1, t + 0.02), theme("clip")); g.addColorStop(1, theme("clip"));
+      } else {
+        g.addColorStop(0, withAlpha(base, 0.75)); g.addColorStop(0.7, base); g.addColorStop(0.88, theme("peak")); g.addColorStop(0.95, theme("clip")); g.addColorStop(1, theme("clip"));
+      }
+      ctx.fillStyle = g;
       ctx.fillRect(x + inner, ym, barW - 2 * inner, y1 - ym);
-      if (!isLufs && this.main[c] > -3) {
-        ctx.fillStyle = theme("clip");
-        ctx.fillRect(x + inner, ym, barW - 2 * inner, yOf(-3) - ym);
-      }
-      if (isLufs && this.main[c] > settings.loudnessTarget + 1) {
-        ctx.fillStyle = theme("clip");
-        ctx.fillRect(x, ym, barW, yOf(settings.loudnessTarget + 1) - ym);
-      }
+      // soft highlight at the bar top
+      ctx.fillStyle = withAlpha(theme("fg-0"), 0.18);
+      ctx.fillRect(x + inner, ym, barW - 2 * inner, 2);
+      ctx.restore();
       const yh = Math.round(yOf(this.hold[c])) + 0.5;
-      ctx.strokeStyle = theme("peak");
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(x, yh); ctx.lineTo(x + barW, yh); ctx.stroke();
+      ctx.save();
+      ctx.shadowColor = theme("peak"); ctx.shadowBlur = 6;
+      ctx.strokeStyle = withAlpha(theme("peak"), 0.95);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x + 1, yh); ctx.lineTo(x + barW - 1, yh); ctx.stroke();
+      ctx.restore();
       ctx.lineWidth = 1;
-      ctx.fillStyle = this.clip[c] ? theme("clip") : theme("bg-3");
-      ctx.fillRect(x, y0 - (short ? 6 : 10), barW, short ? 4 : 6);
+      ctx.fillStyle = this.clip[c] ? theme("clip") : withAlpha(theme("bg-3"), 0.8);
+      roundRect(x, y0 - (short ? 6 : 10), barW, short ? 4 : 6, 2); ctx.fill();
       if (!tiny) {
         ctx.fillStyle = theme("fg-1");
         ctx.textAlign = "center";

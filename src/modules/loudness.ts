@@ -6,11 +6,10 @@ import { getSource } from "../engine/instance";
 
 // Loudness (EBU R128) — one wide tile with four parts, left to right:
 //   meters    — live M / S LUFS bars like the Levels module (target line, peak hold, over-target red)
+//   profile   — right beside the meters: distribution of short-term loudness over the trace
+//               window in 1 LU bins with a median marker (like the Dynamics module)
 //   trace     — the last 60 s of loudness drawn like the Waveform's level history: short-term
 //               as a filled band from the bottom, momentary as a line, the target dashed
-//   profile   — distribution of short-term loudness over the trace window in 1 LU bins
-//               with a median marker (like the Dynamics module), so you see where the
-//               material usually sits, not just now
 //   readouts  — Integrated hero, Range, Momentary, Short-term, True-peak max, target (right)
 // Parts drop out as the tile gets narrower (profile → meters → readouts shrink).
 
@@ -159,39 +158,12 @@ export class LoudnessModule implements Module {
         ctx.fillStyle = theme("fg-1"); ctx.font = font(9); ctx.textAlign = "center"; ctx.textBaseline = "top";
         ctx.fillText(c ? "S" : "M", bx + barW / 2, gy1 + 3);
       }
-      x += metersW + gap;
+      x += metersW + 4;
     }
-
-    // trace: Waveform-style level history (S filled from the bottom, M as a line)
-    const tx0 = x, tx1 = plotRight - (profW ? profW + gap : 0);
-    const tw = tx1 - tx0;
-    if (tw < 40) return;
-    ctx.strokeStyle = theme("grid"); ctx.lineWidth = 1;
-    ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    for (let v = GRAPH_TOP; v >= GRAPH_BOTTOM; v -= 10) {
-      const yy = Math.round(yOf(v, gy0, gh)) + 0.5;
-      ctx.beginPath(); ctx.moveTo(tx0, yy); ctx.lineTo(tx1, yy); ctx.stroke();
-      ctx.fillText(`${v}`, tx0 + 2, yy - 5);
-    }
-    const ty = Math.round(yOf(target, gy0, gh)) + 0.5;
-    ctx.strokeStyle = theme("target"); ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(tx0, ty); ctx.lineTo(tx1, ty); ctx.stroke(); ctx.setLineDash([]);
+    // profile: distribution of short-term loudness (1 LU bins) + median, glued to the meters
     const n = this.histS.length;
-    ctx.beginPath();
-    ctx.moveTo(tx0, gy1);
-    for (let i = 0; i < n; i++) ctx.lineTo(tx0 + (i / (n - 1)) * tw, yOf(this.histS[i], gy0, gh));
-    ctx.lineTo(tx1, gy1); ctx.closePath();
-    ctx.fillStyle = withAlpha(theme("sig-2"), 0.3); ctx.fill();
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) { const xx = tx0 + (i / (n - 1)) * tw, yy = yOf(this.histM[i], gy0, gh); i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
-    ctx.strokeStyle = theme("sig"); ctx.lineWidth = 1.2; ctx.stroke(); ctx.lineWidth = 1;
-    ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "right"; ctx.textBaseline = "top";
-    ctx.fillText(`${HISTORY_S}s · ▬ S · — M`, tx1 - 2, gy0 + 2);
-    ctx.textAlign = "center";
-    for (const s of [0, 15, 30, 45]) { const xx = tx1 - (s / HISTORY_S) * tw; ctx.fillText(s === 0 ? "now" : `−${s}s`, xx, gy1 + 3); }
-
-    // profile: distribution of short-term loudness over the trace window (1 LU bins) + median
     if (profW) {
-      const pxl = tx1 + gap;
+      const pxl = x;
       const hist = new Float32Array(BINS);
       const vals2: number[] = [];
       for (let i = 0; i < n; i++) { const v = this.histS[i]; if (v > -90) { vals2.push(v); hist[Math.min(BINS - 1, Math.max(0, Math.floor(v - GRAPH_BOTTOM)))]++; } }
@@ -214,7 +186,35 @@ export class LoudnessModule implements Module {
         ctx.fillText(`~${med.toFixed(0)}`, pxl + 2, ym - 1);
       }
       ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "center"; ctx.textBaseline = "top";
-      ctx.fillText("분포 S", pxl + profW / 2, gy1 + 3);
+      ctx.fillText("분포", pxl + profW / 2, gy1 + 3);
+      x += profW + gap;
     }
+
+    // trace: Waveform-style level history (S filled from the bottom, M as a line)
+    const tx0 = x, tx1 = plotRight;
+    const tw = tx1 - tx0;
+    if (tw < 40) return;
+    ctx.strokeStyle = theme("grid"); ctx.lineWidth = 1;
+    ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    for (let v = GRAPH_TOP; v >= GRAPH_BOTTOM; v -= 10) {
+      const yy = Math.round(yOf(v, gy0, gh)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(tx0, yy); ctx.lineTo(tx1, yy); ctx.stroke();
+      ctx.fillText(`${v}`, tx0 + 2, yy - 5);
+    }
+    const ty = Math.round(yOf(target, gy0, gh)) + 0.5;
+    ctx.strokeStyle = theme("target"); ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(tx0, ty); ctx.lineTo(tx1, ty); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(tx0, gy1);
+    for (let i = 0; i < n; i++) ctx.lineTo(tx0 + (i / (n - 1)) * tw, yOf(this.histS[i], gy0, gh));
+    ctx.lineTo(tx1, gy1); ctx.closePath();
+    ctx.fillStyle = withAlpha(theme("sig-2"), 0.3); ctx.fill();
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) { const xx = tx0 + (i / (n - 1)) * tw, yy = yOf(this.histM[i], gy0, gh); i ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy); }
+    ctx.strokeStyle = theme("sig"); ctx.lineWidth = 1.2; ctx.stroke(); ctx.lineWidth = 1;
+    ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "right"; ctx.textBaseline = "top";
+    ctx.fillText(`${HISTORY_S}s · ▬ S · — M`, tx1 - 2, gy0 + 2);
+    ctx.textAlign = "center";
+    for (const s of [0, 15, 30, 45]) { const xx = tx1 - (s / HISTORY_S) * tw; ctx.fillText(s === 0 ? "now" : `−${s}s`, xx, gy1 + 3); }
+
   }
 }

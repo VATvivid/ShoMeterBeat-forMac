@@ -213,7 +213,8 @@ export class EmojiModule implements Module {
       if (this.onsets.length > 12) this.onsets.shift();
       this.shake = 1;
       this.impact = 1;
-      this.impactPow = Math.max(0.2, Math.min(1, (lvl - this.levelSlow - 9) / 15));
+      // strength 0…1 over a 9…29 dB jump: a soft tick barely flickers, a hard hit fills the tile
+      this.impactPow = Math.max(0.05, Math.min(1, (lvl - this.levelSlow - 9) / 20));
     }
     this.impact = Math.max(0, this.impact - dt * 2.6);
     // rhythmic? intervals of the last 6 onsets agree within 15 %
@@ -280,7 +281,7 @@ export class EmojiModule implements Module {
     this.shake = Math.max(0, this.shake - dt * 4);
     const labelH = this.showLabel ? 16 : 0;
     const p = Math.max(1, Math.floor(Math.min(w - 12, h - labelH - 10) / 17));
-    const size = p * 16;
+    const size = (p * 16) * 0.8; // 2026-11-13: 20 % smaller (사용자)
     const cx = w / 2, baseY = (h - labelH) / 2;
     const lvl01 = Math.max(0, Math.min(1, (this.level + 60) / 60));
     // animation offsets
@@ -307,13 +308,14 @@ export class EmojiModule implements Module {
       const k = this.impact, prog = 1 - k, pw = this.impactPow;
       const icx = cx + ox, icy = baseY + oy;
       ctx.save();
-      ctx.fillStyle = withAlpha(theme("target"), 0.35 * k * pw);
-      ctx.beginPath(); ctx.arc(icx, icy, sz * (0.55 + 0.25 * prog), 0, Math.PI * 2); ctx.fill();
-      const rr = sz * (0.5 + 1.1 * prog * (0.6 + 0.4 * pw));
-      ctx.strokeStyle = withAlpha(theme("peak"), 0.9 * k); ctx.lineWidth = Math.max(1.5, sz * 0.06 * k);
+      // everything scales with pw: flash radius, ring size and width, line count and length
+      ctx.fillStyle = withAlpha(theme("target"), (0.1 + 0.4 * pw) * k);
+      ctx.beginPath(); ctx.arc(icx, icy, sz * (0.35 + 0.5 * pw + 0.3 * prog * pw), 0, Math.PI * 2); ctx.fill();
+      const rr = sz * (0.45 + 0.2 * pw + prog * (0.3 + 1.6 * pw));
+      ctx.strokeStyle = withAlpha(theme("peak"), (0.5 + 0.5 * pw) * k); ctx.lineWidth = Math.max(1, sz * (0.02 + 0.08 * pw) * k);
       ctx.beginPath(); ctx.arc(icx, icy, rr, 0, Math.PI * 2); ctx.stroke();
-      const n = 12, r0 = sz * (0.55 + 0.5 * prog), len = sz * (0.25 + 0.55 * pw) * (0.5 + 0.5 * k);
-      ctx.strokeStyle = withAlpha(theme("fg-0"), 0.85 * k); ctx.lineWidth = Math.max(1, sz * 0.03);
+      const n = pw < 0.25 ? 6 : pw < 0.6 ? 8 : 12, r0 = sz * (0.5 + 0.6 * prog * pw), len = sz * (0.08 + 1.1 * pw) * (0.5 + 0.5 * k);
+      ctx.strokeStyle = withAlpha(theme("fg-0"), (0.4 + 0.6 * pw) * k); ctx.lineWidth = Math.max(1, sz * (0.015 + 0.03 * pw));
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2 + (i % 2 ? 0.13 : 0);
         const l = len * (i % 3 === 0 ? 1 : 0.6);

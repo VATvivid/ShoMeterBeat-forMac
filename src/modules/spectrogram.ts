@@ -3,7 +3,28 @@ import { colorMap, font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
 
-const DB_TOP = 0, DB_BOTTOM = -96;
+const DB_TOP = 0;
+
+/** Colour themes: 4–6 stops from silence to loud (hex). "theme" follows the app's --map-* tokens. */
+const PALETTES: Record<string, { label: string; stops: string[] | null }> = {
+  theme: { label: "기본 (앱 테마)", stops: null },
+  fire: { label: "불꽃 (검정→빨강→노랑→흰색)", stops: ["#0a0a0a", "#4a0a12", "#b8222a", "#ff8a1f", "#ffe36b", "#ffffff"] },
+  viridis: { label: "비리디스 (보라→초록→노랑)", stops: ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"] },
+  ice: { label: "아이스 (검정→파랑→하늘→흰색)", stops: ["#05070d", "#102a6b", "#1e6fd9", "#5fd0ff", "#ffffff"] },
+  mono: { label: "흑백 (대비 높음)", stops: ["#000000", "#3a3a3a", "#8c8c8c", "#d8d8d8", "#ffffff"] },
+  magma: { label: "마그마 (자홍→주황)", stops: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d", "#fcfdbf"] },
+};
+function buildMap(stops: string[]): Uint8ClampedArray {
+  const rgb = stops.map((h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+  const out = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const p = (i / 255) * (rgb.length - 1);
+    const k = Math.min(rgb.length - 2, Math.floor(p));
+    const t = p - k;
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = rgb[k][c] + (rgb[k + 1][c] - rgb[k][c]) * t;
+  }
+  return out;
+}
 const PAD_L = 34;
 const FREQ_TICKS = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
 const ROWS_3D = 72;
@@ -29,10 +50,26 @@ export class SpectrogramModule implements Module {
 
   private get view() { return modSetting(this.id, "view", "2d"); }
   private get speed() { return modSetting(this.id, "speed", 1); }
+  private get palette() { return modSetting(this.id, "palette", "theme"); }
+  /** Lowest level that still gets a colour (dB). Raising it hides the noise floor and spreads the colours over what remains. */
+  private get floor() { return modSetting(this.id, "floor", -96); }
+  /** Gamma on the 0…1 level: < 1 brightens quiet detail, > 1 keeps only the loud parts bright. */
+  private get gamma() { return modSetting(this.id, "gamma", 1); }
+  private mapKey = "";
+  private ensureMap() {
+    const key = this.palette;
+    if (key === this.mapKey) return;
+    const p = PALETTES[key] ?? PALETTES.theme;
+    this.map = p.stops ? buildMap(p.stops) : colorMap();
+    this.mapKey = key;
+  }
 
   settings(): SettingItem[] {
     return [
       { type: "select", label: "보기", value: this.view, options: [{ value: "2d", label: "2D (스크롤)" }, { value: "3d", label: "3D (워터폴)" }], onChange: (v) => setModSetting(this.id, "view", v) },
+      { type: "select", label: "색상 테마", value: this.palette, options: Object.entries(PALETTES).map(([k, p]) => ({ value: k, label: p.label })), onChange: (v) => setModSetting(this.id, "palette", v) },
+      { type: "range", label: "감도 (바닥 dB)", value: this.floor, min: -120, max: -30, step: 3, format: (v) => `${v} dB`, onChange: (v) => setModSetting(this.id, "floor", v) },
+      { type: "range", label: "대비 (감마)", value: this.gamma, min: 0.4, max: 2.5, step: 0.1, format: (v) => `γ ${v.toFixed(1)}`, onChange: (v) => setModSetting(this.id, "gamma", v) },
       { type: "select", label: "속도", value: String(this.speed), options: [{ value: "0.5", label: "느리게" }, { value: "1", label: "보통" }, { value: "2", label: "빠르게" }], onChange: (v) => setModSetting(this.id, "speed", Number(v)) },
     ];
   }
@@ -52,9 +89,10 @@ export class SpectrogramModule implements Module {
     }
   }
 
-  private norm(v: number) { return Math.min(1, Math.max(0, (v - DB_BOTTOM) / (DB_TOP - DB_BOTTOM))); }
+  private norm(v: number) { const lo = this.floor; const t = Math.min(1, Math.max(0, (v - lo) / (DB_TOP - lo))); const g = this.gamma; return g === 1 ? t : Math.pow(t, g); }
 
   draw(d: DrawCtx, f: Frame) {
+    this.ensureMap();
     // Advance at `speed` rows per frame (fractional speeds skip frames).
     let advance = false;
     if (f.seq !== this.lastSeq) {

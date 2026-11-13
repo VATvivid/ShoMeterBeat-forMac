@@ -28,6 +28,7 @@ export class SpectrumModule implements Module {
   readonly id = "spectrum";
   readonly title = "Spectrum";
   private smooth = new Float32Array(N_SPEC).fill(SILENCE_DB);
+  private smooth2 = new Float32Array(N_SPEC).fill(SILENCE_DB); // second curve (R in LR, Side in MS)
   private hold = new Float32Array(N_SPEC).fill(SILENCE_DB);
   private holdAge = new Float32Array(N_SPEC);
   private note = "";
@@ -40,11 +41,13 @@ export class SpectrumModule implements Module {
   private get presets(): RefPresets { return modSetting<RefPresets>(this.id, "refs", {}); }
   private get refName(): string { return modSetting(this.id, "ref", ""); }
   private get autoLevel() { return modSetting(this.id, "refAuto", true); }
+  private get chan() { return modSetting(this.id, "chan", "max") as "max" | "lr" | "ms"; }
   private get colors(): ColorPreset { return COLOR_PRESETS[modSetting(this.id, "colors", "default")] ?? COLOR_PRESETS.default; }
 
   settings(): SettingItem[] {
     const names = Object.keys(this.presets);
     return [
+      { type: "select", label: "채널", value: this.chan, options: [{ value: "max", label: "L/R 최대 (한 곡선)" }, { value: "lr", label: "LR 모드 (L · R 두 곡선)" }, { value: "ms", label: "MS 모드 (Mid · Side)" }], onChange: (v) => setModSetting(this.id, "chan", v) },
       { type: "select", label: "기울기", value: String(this.slope), options: [0, 3, 4.5, 6].map((v) => ({ value: String(v), label: v === 0 ? "0 dB/oct (평탄)" : `+${v} dB/oct` })), onChange: (v) => setModSetting(this.id, "slope", Number(v)) },
       { type: "select", label: "dB 범위", value: String(this.range), options: [60, 72, 96, 120].map((v) => ({ value: String(v), label: `${v} dB` })), onChange: (v) => setModSetting(this.id, "range", Number(v)) },
       { type: "toggle", label: "피크 홀드", value: this.showHold, onChange: (v) => setModSetting(this.id, "hold", v) },
@@ -102,10 +105,14 @@ export class SpectrumModule implements Module {
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 20 || ph < 20) return;
 
-    // Update ballistics (max of L/R, with slope).
+    // Update ballistics with the slope. Channel mode: one curve (max of L/R), two curves
+    // L / R, or two curves Mid / Side (the engine sends M/S spectra next to L/R).
+    const chan = this.chan;
+    const two = chan !== "max";
     for (let i = 0; i < N_SPEC; i++) {
       const tilt = SLOPE_DB_PER_OCT * Math.log2(pointFreq(i) / 1000);
-      const v = Math.max(f.specL[i], f.specR[i]) + tilt;
+      const v = (chan === "max" ? Math.max(f.specL[i], f.specR[i]) : chan === "lr" ? f.specL[i] : f.specM[i]) + tilt;
+      if (two) this.smooth2[i] = ballistic(this.smooth2[i], (chan === "lr" ? f.specR[i] : f.specS[i]) + tilt, dt, 60);
       this.smooth[i] = ballistic(this.smooth[i], v, dt, 60);
       if (v >= this.hold[i]) { this.hold[i] = v; this.holdAge[i] = 0; }
       else { this.holdAge[i] += dt; if (this.holdAge[i] > 1.0) this.hold[i] = ballistic(this.hold[i], v, dt, 24); }
@@ -186,6 +193,18 @@ export class SpectrumModule implements Module {
     if (cp.glow) { ctx.shadowColor = sig; ctx.shadowBlur = 10; }
     ctx.stroke();
     ctx.shadowBlur = 0;
+    if (two) {
+      // second curve: R or Side in the secondary signal colour (Side is usually far below Mid)
+      ctx.beginPath();
+      for (let i = 0; i < N_SPEC; i++) { const x = xOf(i), y = yOf(this.smooth2[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      ctx.strokeStyle = withAlpha(theme("sig-2"), 0.95);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = theme("fg-1"); ctx.font = font(10, 600); ctx.textAlign = "left"; ctx.textBaseline = "top";
+      const a = chan === "lr" ? "L" : "M", b = chan === "lr" ? "R" : "S";
+      ctx.fillStyle = sig; ctx.fillText(`— ${a}`, x0 + 4, y0 + 2);
+      ctx.fillStyle = theme("sig-2"); ctx.fillText(`— ${b}`, x0 + 30, y0 + 2);
+    }
 
     // Peak hold
     if (this.showHold) {

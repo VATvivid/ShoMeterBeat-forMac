@@ -31,6 +31,8 @@ pub struct Analyzer {
     centroid: f32,
     spec_l: Vec<Complex<f32>>,
     stereo_bands: [f32; 2 * N_BANDS],
+    mags_m: Vec<f32>,
+    mags_s: Vec<f32>,
 }
 
 impl Analyzer {
@@ -70,6 +72,8 @@ impl Analyzer {
             centroid: 0.0,
             spec_l: vec![Complex::new(0.0, 0.0); FFT_N / 2 + 1],
             stereo_bands: [0.0; 2 * N_BANDS],
+            mags_m: vec![0.0; FFT_N / 2 + 1],
+            mags_s: vec![0.0; FFT_N / 2 + 1],
         }
     }
 
@@ -148,6 +152,15 @@ impl Analyzer {
         for i in 0..=FFT_N / 2 {
             self.mags[i] = self.scratch[i].norm() * norm;
         }
+        if ch == 1 {
+            // mid / side magnitude spectra from the two complex spectra (for the Spectrum's MS mode)
+            for i in 0..=FFT_N / 2 {
+                let l = self.spec_l[i];
+                let r = self.scratch[i];
+                self.mags_m[i] = ((l + r) * 0.5).norm() * norm;
+                self.mags_s[i] = ((l - r) * 0.5).norm() * norm;
+            }
+        }
         if ch == 0 {
             // Noise-likeness and brightness over 100 Hz … 8 kHz (power domain).
             let bin_hz = self.sr / FFT_N as f32;
@@ -188,10 +201,32 @@ impl Analyzer {
         }
     }
 
+    /// Log-spaced band maximum of a magnitude array (same binning as the L/R spectra).
+    fn bands_of(&self, mags: &[f32], out: &mut Vec<f32>) {
+        out.clear();
+        for i in 0..N_SPEC {
+            let (lo, hi) = self.bands[i];
+            let amp = if hi > lo {
+                mags[lo..hi].iter().cloned().fold(0.0f32, f32::max)
+            } else {
+                let c = self.centres[i];
+                let b = c.floor() as usize;
+                let t = c - b as f32;
+                let m0 = mags[b.min(FFT_N / 2)];
+                let m1 = mags[(b + 1).min(FFT_N / 2)];
+                m0 + (m1 - m0) * t
+            };
+            out.push(to_db(amp));
+        }
+    }
+
     pub fn snapshot(&mut self) -> Frame {
         let mut f = Frame::default();
         self.spectrum(0, &mut f.spectrum_l);
         self.spectrum(1, &mut f.spectrum_r);
+        let (mm, ms) = (self.mags_m.clone(), self.mags_s.clone());
+        self.bands_of(&mm, &mut f.spectrum_m);
+        self.bands_of(&ms, &mut f.spectrum_s);
 
         let l = self.tail(0, RMS_N);
         let r = self.tail(1, RMS_N);

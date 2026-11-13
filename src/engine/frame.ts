@@ -51,6 +51,9 @@ export interface Frame {
   envelope: Float32Array; // LPC envelope dB, 0..ENV_MAX_HZ linear
   /** (correlation, width) per band — see BAND_LABELS. */
   bands: Float32Array;
+  /** Mid / side spectra (dB, N_SPEC log points) for the Spectrum's MS mode. */
+  specM: Float32Array;
+  specS: Float32Array;
 }
 
 export function pointFreq(i: number): number {
@@ -102,6 +105,8 @@ export function parseFrame(buf: ArrayBuffer): Frame | null {
     lissa: take(2 * N_LISSA),
     envelope: v.length >= o + N_ENV ? take(N_ENV) : new Float32Array(N_ENV).fill(SILENCE_DB),
     bands: v.length >= o + 2 * N_BANDS ? take(2 * N_BANDS) : new Float32Array(2 * N_BANDS),
+    specM: v.length >= o + N_SPEC ? take(N_SPEC) : new Float32Array(N_SPEC).fill(SILENCE_DB),
+    specS: v.length >= o + N_SPEC ? take(N_SPEC) : new Float32Array(N_SPEC).fill(SILENCE_DB),
   };
 }
 
@@ -116,5 +121,6 @@ export function emptyFrame(): Frame {
     scopeL: new Float32Array(N_SCOPE), scopeR: new Float32Array(N_SCOPE), lissa: new Float32Array(2 * N_LISSA),
     envelope: new Float32Array(N_ENV).fill(SILENCE_DB),
     bands: new Float32Array(2 * N_BANDS),
+    specM: new Float32Array(N_SPEC).fill(SILENCE_DB), specS: new Float32Array(N_SPEC).fill(SILENCE_DB),
   };
 }
