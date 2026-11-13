@@ -5,13 +5,13 @@ import { settings, saveSettings, modSetting, setModSetting } from "../state";
 import { getSource } from "../engine/instance";
 
 // Loudness (EBU R128) — one wide tile with four parts, left to right:
-//   readouts  — Integrated hero, Range, Momentary, Short-term, True-peak max, target
-//   meters    — M / S LUFS bars like the Levels module (target line, peak hold, over-target red)
+//   meters    — live M / S LUFS bars like the Levels module (target line, peak hold, over-target red)
 //   trace     — the last 60 s of loudness drawn like the Waveform's level history: short-term
 //               as a filled band from the bottom, momentary as a line, the target dashed
 //   profile   — distribution of short-term loudness over the trace window in 1 LU bins
 //               with a median marker (like the Dynamics module), so you see where the
 //               material usually sits, not just now
+//   readouts  — Integrated hero, Range, Momentary, Short-term, True-peak max, target (right)
 // Parts drop out as the tile gets narrower (profile → meters → readouts shrink).
 
 const HISTORY_S = 60;
@@ -109,8 +109,8 @@ export class LoudnessModule implements Module {
     };
 
     // ---- readouts column
-    const px = 10, py = 8;
     const readW = compact ? Math.min(w - 20, 150) : narrow ? 150 : 190;
+    const px = compact && w < 300 ? 10 : w - readW, py = 8; // readouts sit at the right edge
     label("Integrated", px, py);
     const over = f.lufsI > target + 1;
     value(fmtDb(f.lufsI), "LUFS", px, py + 13, heroSize, over ? theme("clip") : theme("peak"));
@@ -127,13 +127,14 @@ export class LoudnessModule implements Module {
     const tname = TARGETS.find((t) => t.lufs === target)?.label ?? `${target} LUFS`;
     if (y + 12 < h - 8) ctx.fillText(`target ${tname.replace(/ \(.*$/, "")} · max M ${fmtDb(f.maxM)} · max S ${fmtDb(f.maxS)}`, px, y);
     if (compact && w < 300) return; // readouts only
-    let x = px + readW + 6;
+    let x = 10; // plots start at the left: meters → trace → profile, then the readouts
 
     // ---- plot area shared by meters / trace / profile
     const gy0 = 14, gy1 = h - 18, gh = gy1 - gy0;
     if (gh < 30) return;
     const metersW = this.showMeters && !narrow ? 44 : 0;
-    const profW = this.showProfile && w - x - metersW > 200 ? 56 : 0;
+    const plotRight = px - 10;
+    const profW = this.showProfile && plotRight - x - metersW > 200 ? 56 : 0;
     const gap = 10;
 
     // meters: M / S bars with target line + hold (Levels style)
@@ -162,7 +163,7 @@ export class LoudnessModule implements Module {
     }
 
     // trace: Waveform-style level history (S filled from the bottom, M as a line)
-    const tx0 = x, tx1 = w - 8 - (profW ? profW + gap : 0);
+    const tx0 = x, tx1 = plotRight - (profW ? profW + gap : 0);
     const tw = tx1 - tx0;
     if (tw < 40) return;
     ctx.strokeStyle = theme("grid"); ctx.lineWidth = 1;
