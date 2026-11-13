@@ -98,6 +98,7 @@ export class VariationMapModule implements Module {
   private comboBest = 0;
   private comboCluster = 0;
   private comboBy = new Map<number, number>(); // cluster id → current chain length
+  private lastRepeatAt = -1e9;   // clock of the last exact repeat (header flag for 3 s)
   private comboBump = 0;      // 1 right after an increment → 0
   private comboBreak = 0;     // 1 right after a repeat → 0
   private burst = 0;          // burst ring at the newest dot
@@ -130,7 +131,8 @@ export class VariationMapModule implements Module {
     const last = this.events[this.events.length - 1];
     const nov = last && this.events.length > 1 ? `  ·  Δ${Math.round(last.nov * 100)}% ${GROUP_NAMES[last.novG]}` : "";
     const combo = this.combo >= 2 ? `  ·  콤보 ×${this.combo}` : "";
-    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${nov}${combo}${this.warn.until > this.clock ? "  ⚠ 반복" : ""}`;
+    const rep = this.warn.until > this.clock || this.clock - this.lastRepeatAt < 3 ? "  ⚠ 반복" : "";
+    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${nov}${combo}${rep}`;
   }
 
   private poll() {
@@ -274,7 +276,7 @@ export class VariationMapModule implements Module {
     const prev = this.comboBy.get(ev.cluster) ?? 0;
     let n: number;
     if (ev.novNew) { n = 1; this.comboBump = 0.5; }
-    else if (repeat) { n = 0; if (prev >= 2) this.comboBreak = 1; }
+    else if (repeat) { n = 0; this.comboBreak = 1; this.lastRepeatAt = this.clock; }
     else { n = prev + 1; this.comboBump = 1; }
     this.comboBy.set(ev.cluster, n);
     for (const id of [...this.comboBy.keys()]) if (!this.clusters.some((c) => c.id === id)) this.comboBy.delete(id);
@@ -286,10 +288,11 @@ export class VariationMapModule implements Module {
 
   private checkRepetition() {
     const k = this.repeatN;
-    if (this.events.length < k) return;
-    const last = this.events.slice(-k);
-    const cid = last[0].cluster;
-    if (!last.every((e) => e.cluster === cid)) return;
+    const newest = this.events[this.events.length - 1];
+    if (!newest) return;
+    const cid = newest.cluster;
+    const last = this.events.filter((e) => e.cluster === cid).slice(-k);
+    if (last.length < k) return;
     let maxD = 0;
     for (let i = 0; i < k; i++) for (let j = i + 1; j < k; j++) maxD = Math.max(maxD, this.dist(last[i].z, last[j].z));
     if (maxD <= this.similar) {
@@ -303,7 +306,7 @@ export class VariationMapModule implements Module {
     this.clock += dt;
     this.poll();
     this.comboBump = Math.max(0, this.comboBump - dt * 3);
-    this.comboBreak = Math.max(0, this.comboBreak - dt * 1.6);
+    this.comboBreak = Math.max(0, this.comboBreak - dt * 0.6);
     this.burst = Math.max(0, this.burst - dt * 1.8);
     const listW = w > 320 ? 118 : 0;
     const stripH = this.showNovelty && h > 170 ? 46 : 0;
@@ -383,7 +386,7 @@ export class VariationMapModule implements Module {
       const size = Math.min(34, 14 + this.combo * 1.6) * (1 + 0.25 * this.comboBump);
       const sx = this.comboBreak > 0 ? (Math.random() - 0.5) * 6 * this.comboBreak : 0;
       ctx.textAlign = "right"; ctx.textBaseline = "top";
-      if (this.comboBreak > 0 && this.combo === 0) {
+      if (this.comboBreak > 0 && this.clock - this.lastRepeatAt < 1.7) {
         ctx.fillStyle = withAlpha(theme("clip"), Math.min(1, this.comboBreak * 1.5)); ctx.font = font(18, 700);
         ctx.fillText("REPEAT ✕", x1 - 8 + sx, y0 + 6);
         ctx.fillStyle = withAlpha(theme("fg-2"), this.comboBreak); ctx.font = font(10);
