@@ -310,7 +310,7 @@ export class Grid {
     const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
-      { label: settings.layoutMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 밀어내기)" : "배치 방식: 밀어내기 ✓ (→ 자리 바꾸기)", onClick: () => { settings.layoutMode = settings.layoutMode === "swap" ? "push" : "swap"; saveSettings(); } },
+      { label: `배치 방식: ${({ free: "겹침 허용", swap: "자리 바꾸기", push: "밀어내기" } as const)[settings.layoutMode] ?? "겹침 허용"} ✓ (클릭해 바꾸기)`, onClick: () => { settings.layoutMode = settings.layoutMode === "free" ? "swap" : settings.layoutMode === "swap" ? "push" : "free"; saveSettings(); } },
       ...extra,
       { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
@@ -443,10 +443,12 @@ export class Grid {
           return;
         }
         if (outside) { outside = false; this.ghost.style.display = "block"; this.onXDrag?.leave(); }
-        const swap = mode === "move" && settings.layoutMode === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
-        valid = !(mode === "move" && settings.layoutMode === "swap" && swap === null);
+        const lm = settings.layoutMode;
+        const swap = mode === "move" && lm === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
+        valid = !(mode === "move" && lm === "swap" && swap === null);
         this.ghost.classList.toggle("invalid", !valid);
-        const resolved = swap ?? (valid ? resolvePush(this.layout, t.id, next, this.kind) : { [t.id]: { ...next } });
+        // free: the tile simply goes where it is dropped — overlapping is allowed, nothing else moves
+        const resolved = lm === "free" ? { [t.id]: { ...next } } : swap ?? (valid ? resolvePush(this.layout, t.id, next, this.kind) : { [t.id]: { ...next } });
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
         this.showGuides(resolved, t.id);

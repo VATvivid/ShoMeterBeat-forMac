@@ -51,7 +51,9 @@ export interface Settings {
   /** Main window always-on-top (independent of dock mode, which forces it). */
   alwaysOnTop: boolean;
   /** Edit-mode drop behaviour: swap with the one tile under the drop (default) or push everything aside. */
-  layoutMode: "swap" | "push";
+  layoutMode: "free" | "swap" | "push";
+  /** 투명도 slider target: only the backgrounds (window stays sharp) or the whole window (WS_EX_LAYERED alpha). */
+  opacityMode: "bg" | "window";
   /** Per-module free-form settings, keyed by module id. */
   modules: Record<string, Record<string, unknown>>;
 }
@@ -118,7 +120,7 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export const settings: Settings = load(SETTINGS_KEY, {
-  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, opacity: 100, alwaysOnTop: false, layoutMode: "swap", modules: {},
+  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, opacity: 100, alwaysOnTop: false, layoutMode: "free", opacityMode: "bg", modules: {},
 });
 if (!settings.modules || typeof settings.modules !== "object") settings.modules = {};
 

@@ -25,12 +25,12 @@ src/modules/vowels.ts           모음 기준 포먼트(Peterson & Barney 1952, 
 src/modules/vowelTargets.ts     모음별 조음 값 표(chimera-vocal-synth MIT 데이터, THIRD_PARTY_NOTICES.md) — 생성 파일, 손으로 고치지 않음
 src/modules/articulation.ts     F1/F2 → 조음 값(가까운 모음 4개 역거리 보간), REST 자세
 src/modules/tract.ts            측면도 그리기(체 좌표 cm, 원점 성문): 턱 회전·혀·입술·후두·잔상·열색·캘리퍼·호흡
-src/layout/grid.ts              그리드 타일(기본 24×16, 타일이 필요하면 가로·세로로 커짐), 편집 모드 드래그/리사이즈·밀어내기, 창 밖 드롭은 onXDrag로 위임
+src/layout/grid.ts              그리드 타일(기본 24×16 + 편집 모드 +/− 열·행, 타일이 쓰는 칸은 항상 포함), 편집 모드 드래그/리사이즈. 배치 방식 settings.layoutMode: free(겹침 허용, 기본)/swap(자리 바꾸기, resolveSwap)/push(밀어내기, resolvePush). 드래그 미리보기는 항상 전체 레이아웃으로 dims 계산(칸 크기 불변), 창 밖 드롭은 onXDrag로 위임
 src/state.ts                    설정·레이아웃 저장, 기본 배치(DESIGN.md §5). WIN_LABEL/IS_POP(URL ?win=), 별도 창은 자기 레이아웃 키, settings는 storage 이벤트로 창 간 동기화
 src/main.ts                     모든 창의 진입점: 그리드·렌더 루프·파일 드롭 공통, 메인이면 toolbar.ts, 별도 창이면 pop.ts
 src/toolbar.ts                  메인 툴바·상태 바(모듈/편집/도킹/창 ▾/프리셋/녹음/장치/플러그인)
 src/pop.ts                      별도 창 상단 바(드래그 영역·📌·투명도·모듈·편집·찾기·닫기)·리사이즈 그립·위치 저장
-src/windows.ts                  별도 창 목록(rm.popwins.v1)·생성/복원/닫기, 창 찾기 반짝임, 항상 위·투명도, 창 간 타일 드래그(rm://xdrag-*)
+src/windows.ts                  별도 창 목록(rm.popwins.v1)·생성/복원/닫기(pop이 스스로 모듈을 rm://to-main으로 돌려보내고 destroy), 창 찾기 반짝임, 항상 위, 투명도(settings.opacityMode: bg = CSS --bg-alpha, 창은 transparent:true / window = set_opacity), 창 간 타일 드래그(rm://xdrag-*). rm.debug.browserArgs(localStorage)는 검증 빌드 전용 훅
 src-tauri/src/lib.rs            창 명령: set_opacity(WS_EX_LAYERED), drag_hover/drag_drop(WindowFromPoint로 포인터 아래 창 찾기 → 이벤트), to_screen, 클립 폴더, 메인 창 닫히면 종료
 src/modules/emoji.ts            도트 스프라이트(문자열 → 테마 토큰), 규칙 판별(frame 값만) / AI 판별(YAMNet 태그 → 스프라이트 표)
 src/modules/aitags.ts           YAMNet 태그 그룹 + requestTagging(여러 모듈이 같이 켜고 끄는 공유 스위치)

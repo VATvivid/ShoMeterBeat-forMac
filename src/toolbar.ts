@@ -95,6 +95,14 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     op.addEventListener("input", () => { settings.opacity = Number(op.value); saveSettings(); opVal.textContent = `${op.value}%`; applyOpacity(settings.opacity); });
     opRow.append(document.createTextNode("투명도 "), op, opVal);
     winPanel.appendChild(opRow);
+    const modeRow = document.createElement("label");
+    modeRow.className = "row";
+    const modeSel = document.createElement("select");
+    for (const [v, l] of [["bg", "배경만 흐리게 (글자·그래프 선명)"], ["window", "창 전체 흐리게"]] as const) { const o = document.createElement("option"); o.value = v; o.textContent = l; modeSel.appendChild(o); }
+    modeSel.value = settings.opacityMode;
+    modeSel.addEventListener("change", () => { settings.opacityMode = modeSel.value as "bg" | "window"; saveSettings(); applyOpacity(settings.opacity); });
+    modeRow.append(document.createTextNode("투명 방식 "), modeSel);
+    winPanel.appendChild(modeRow);
     const sep = document.createElement("div"); sep.className = "ctx-sep"; winPanel.appendChild(sep);
     const row = document.createElement("div"); row.className = "preset-row";
     const newBtn = document.createElement("button"); newBtn.className = "btn"; newBtn.textContent = "새 별도 창";

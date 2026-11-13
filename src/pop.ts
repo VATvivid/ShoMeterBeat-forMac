@@ -23,12 +23,13 @@ export function initPop(grid: Grid) {
   const prefs = windowPrefs();
 
   const pin = document.createElement("button");
-  pin.className = "btn icon" + (prefs.pinned ? " on" : "");
-  pin.title = "항상 위에";
-  pin.textContent = "📌";
+  pin.className = "btn icon pin" + (prefs.pinned ? " on" : "");
+  const pinLabel = (on: boolean) => { pin.textContent = on ? "📌 항상 위 ON" : "📌 항상 위 OFF"; pin.title = on ? "항상 위에: 켜짐 (클릭해 끄기)" : "항상 위에: 꺼짐 (클릭해 켜기)"; };
+  pinLabel(prefs.pinned);
   pin.addEventListener("click", async () => {
     const on = !pin.classList.contains("on");
     pin.classList.toggle("on", on);
+    pinLabel(on);
     saveWindowPrefs({ pinned: on });
     await setAlwaysOnTop(on);
   });

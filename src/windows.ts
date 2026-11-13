@@ -10,7 +10,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { inTauri } from "./engine/source";
 import type { Grid, Rect } from "./layout/grid";
 import { MODULE_TITLES } from "./modules";
-import { IS_POP, popLayoutKey, saveSettings, settings, WIN_LABEL, type Layout } from "./state";
+import { IS_POP, onSettingsSynced, popLayoutKey, saveSettings, settings, WIN_LABEL, type Layout } from "./state";
 
 export interface PopWin { label: string; x: number; y: number; w: number; h: number; pinned: boolean; opacity: number }
 const KEY = "rm.popwins.v1";
@@ -83,7 +83,7 @@ async function openPopWindow(e: PopWin) {
     title: "re-minimeter 창",
     x: e.x / scale, y: e.y / scale, width: e.w / scale, height: e.h / scale,
     minWidth: 160, minHeight: 100,
-    decorations: false, alwaysOnTop: e.pinned, theme: "dark", focus: true,
+    decorations: false, alwaysOnTop: e.pinned, theme: "dark", focus: true, transparent: true,
     // Test hook: a verification build may set this so pop-outs share the main window's WebView2 flags (remote debugging).
     ...(localStorage.getItem("rm.debug.browserArgs") ? { additionalBrowserArgs: localStorage.getItem("rm.debug.browserArgs")! } : {}),
   });
@@ -132,11 +132,20 @@ export async function setAlwaysOnTop(on: boolean) {
   await w.setAlwaysOnTop(on);
 }
 
-/** Window opacity in percent. 0 is applied as a faint 3 % so the window stays clickable. */
+/** 투명도 in percent (100 = opaque). "bg" mode fades only the backgrounds (CSS --bg-alpha on a
+ *  transparent window; text and plots stay sharp); "window" mode fades the whole window
+ *  (WS_EX_LAYERED). 0 is applied as a faint 3 % in window mode so the window stays clickable. */
 export async function applyOpacity(pct: number) {
-  if (!inTauri) return;
-  const a = Math.max(0.03, Math.min(1, pct / 100));
-  await invoke("set_opacity", { alpha: a }).catch((e) => console.error(e));
+  const p = Math.max(0, Math.min(100, pct));
+  if (settings.opacityMode === "window") {
+    document.documentElement.style.setProperty("--bg-alpha", "1");
+    if (!inTauri) return;
+    await invoke("set_opacity", { alpha: Math.max(0.03, p / 100) }).catch((e) => console.error(e));
+  } else {
+    document.documentElement.style.setProperty("--bg-alpha", String(p / 100));
+    if (!inTauri) return;
+    await invoke("set_opacity", { alpha: 1 }).catch((e) => console.error(e));
+  }
 }
 
 /** This window's saved pin/opacity (main: settings; pop-out: its list entry). */
@@ -155,6 +164,7 @@ export function initWindowing(grid: Grid) {
   listen("rm://flash", () => flashHere()).catch(() => {});
   const prefs = windowPrefs();
   if (prefs.opacity < 100) applyOpacity(prefs.opacity);
+  onSettingsSynced(() => { const p = windowPrefs(); applyOpacity(p.opacity); });
   if (!IS_POP && prefs.pinned && settings.dock === "none") setAlwaysOnTop(true);
 
   // Tiles dragged in from another window (events from the Rust side, see lib.rs).
