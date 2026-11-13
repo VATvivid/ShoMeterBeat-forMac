@@ -345,9 +345,10 @@ export class PunchModule implements Module {
     if (tiny) return;
 
     // ---- score panel
-    const px0 = x0 + towerW + (narrow ? 10 : 58);
+    // glove sits between the tower (+ rank words) and the score panel and punches to the right
     const gloveW = this.showGlove && !narrow ? Math.max(40, Math.min(120, Math.min(y1 - y0, w * 0.22))) : 0;
-    const px1 = w - PAD - (gloveW ? gloveW + 8 : 0);
+    const px0 = x0 + towerW + (narrow ? 10 : 58) + (gloveW ? gloveW + 8 : 0);
+    const px1 = w - PAD;
     const pw = px1 - px0;
     if (pw < 40) return;
     let y = y0;
@@ -400,7 +401,7 @@ export class PunchModule implements Module {
       this.drawHistory(ctx, { x: px0, y: y + 4, w: pw, h: histH - 4 }, this.ref, true);
       this.histRect = { x: px0, y: y + 4, w: pw, h: histH - 4 };
     } else { this.histRect = { x: 0, y: 0, w: 0, h: 0 }; this.histBarW = 0; }
-    if (gloveW) this.drawGlove(ctx, w - PAD - gloveW / 2, y0 + Math.min(y1 - y0, gloveW) / 2 + 8, Math.min(gloveW, y1 - y0), !!last);
+    if (gloveW) this.drawGlove(ctx, px0 - 8 - gloveW / 2, y0 + Math.min(y1 - y0, gloveW) / 2 + 8, Math.min(gloveW, y1 - y0), !!last);
     if (!inTauri && this.hits.length === 0) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "bottom";
       ctx.fillText("브라우저 미리보기", px0, y1);
@@ -463,7 +464,7 @@ export class PunchModule implements Module {
     const gloveW = this.showGlove && !tiny ? Math.max(40, Math.min(110, Math.min(ph, w * 0.22))) : 0;
     const profW = narrow ? 0 : Math.min(170, Math.max(80, (w - 2 * PAD - liveW - gloveW) * 0.34));
     const gap = 10;
-    let x = PAD;
+    let x = PAD + (gloveW ? gloveW + gap : 0); // glove first (left), punching right into the meters
     if (liveW) {
       ctx.fillStyle = theme("bg-3"); ctx.fillRect(x, y, liveW, ph);
       const yv = yOfDb(this.live, y, ph);
@@ -478,10 +479,10 @@ export class PunchModule implements Module {
       this.drawProfile(ctx, { x, y, w: profW, h: ph }, last, ref);
       x += profW + gap;
     }
-    const histW = w - PAD - x - (gloveW ? gloveW + gap : 0);
+    const histW = w - PAD - x;
     if (histW > 20) this.drawHistory(ctx, { x, y, w: histW, h: ph }, ref, false);
     this.histRect = { x, y, w: Math.max(0, histW), h: ph };
-    if (gloveW) this.drawGlove(ctx, w - PAD - gloveW / 2, y + ph / 2, Math.min(gloveW, ph), !!last);
+    if (gloveW) this.drawGlove(ctx, PAD + gloveW / 2, y + ph / 2, Math.min(gloveW, ph), !!last);
     if (!inTauri && this.hits.length === 0 && !tiny) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText("브라우저 미리보기", x + histW / 2, y + ph / 2);
@@ -496,7 +497,7 @@ export class PunchModule implements Module {
   }
 
   /** Glove centred at (cx, cy); `side` is the column — a weak hit uses ~1/3 of it, a strong one all of it.
-   *  Punch motion (phase = 1 − jab): wind-up (pull back to the right, squash), thrust to the left
+   *  Punch motion (phase = 1 − jab): wind-up (pull back to the left, squash), thrust to the right
    *  (stretched, speed lines), contact (flash, shockwave rings, impact lines at the fist) and a
    *  damped spring back with a wobble. Every amplitude follows the hit's 강도 (`hitPow`). */
   private drawGlove(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: number, hasHit: boolean) {
@@ -511,11 +512,12 @@ export class PunchModule implements Module {
       else if (t < JAB_HOLD) { const u = (t - JAB_HIT) / (JAB_HOLD - JAB_HIT); dx = -reach; const sq = (1 - u) * 0.18 * pw; sx = 1 - sq; sy = 1 + sq * 0.7; } // fist stays on the target, impact squash easing out
       else { const u = (t - JAB_HOLD) / (1 - JAB_HOLD); dx = -reach * Math.exp(-3.5 * u) * Math.cos(u * Math.PI * 1.2); const wob = 0.12 * pw * Math.exp(-5 * u) * Math.sin(u * Math.PI * 3); sx = 1 - wob; sy = 1 + wob * 0.7; }
     }
+    dx = -dx; // the motion above is written "forward = negative"; the glove punches to the right (2026-11-13 사용자)
     const k = this.impactK();
     const pal = flashPalette(g, this.clock);
     // anchor: predicted contact point until the fist lands, then frozen there for the rest of the punch
     if (!this.contactSet) {
-      this.fist = { x: cx - reach - size * 0.5, y: cy, size };
+      this.fist = { x: cx + reach + size * 0.5, y: cy, size };
       if (this.jab > 0 && 1 - this.jab >= JAB_HIT) this.contactSet = true;
     }
     ctx.save();
@@ -549,7 +551,7 @@ export class PunchModule implements Module {
       }
     }
     if (this.jab > 0) {
-      // speed lines behind (right of) the glove while it thrusts
+      // speed lines behind (left of) the glove while it thrusts
       const t = 1 - this.jab;
       if (t > JAB_WIND && t < JAB_HIT + 0.12) {
         const u = Math.min(1, (t - JAB_WIND) / (JAB_HIT - JAB_WIND));
@@ -557,13 +559,13 @@ export class PunchModule implements Module {
         ctx.strokeStyle = withAlpha(theme("fg-1"), a); ctx.lineWidth = Math.max(1, size / 28);
         const L = size * (0.25 + 0.9 * pw) * (0.4 + 0.6 * u);
         for (let i = 0; i < 4; i++) {
-          const yy = cy + (i - 1.5) * size * 0.2, xr = cx + dx + size * 0.45;
-          ctx.beginPath(); ctx.moveTo(xr, yy); ctx.lineTo(xr + L * (i % 2 ? 0.7 : 1), yy); ctx.stroke();
+          const yy = cy + (i - 1.5) * size * 0.2, xr = cx + dx - size * 0.45;
+          ctx.beginPath(); ctx.moveTo(xr, yy); ctx.lineTo(xr - L * (i % 2 ? 0.7 : 1), yy); ctx.stroke();
         }
       }
     }
     ctx.translate(cx + dx, cy);
-    ctx.scale(sx, sy);
+    ctx.scale(-sx, sy); // sprite mirrored: the fist faces right
     if (pal.length) {
       // 화려함 glow: one colour (40–50), four colours (50–60), rotating rainbow (60+); rays from 42,
       // more of them and faster the higher the index

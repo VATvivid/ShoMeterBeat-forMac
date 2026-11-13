@@ -155,6 +155,7 @@ export class EmojiModule implements Module {
   private clock = 0;
   private level = -120;           // smoothed level dB
   private levelSlow = -120;       // slower level for onset detection
+  private punchSlow = -120;       // slow average of the engine's transient-only punchM (second onset trigger)
   private lastOnset = -10;
   private onsets: number[] = [];
   private impact = 0;             // 1 right after a transient → 0 (burst behind the sprite)
@@ -207,8 +208,13 @@ export class EmojiModule implements Module {
     const silent = this.level < -55;
     const v = f.voiced > 0.5 && f.f0 > 60 && f.f0 < 1200 && !silent ? 1 : 0;
     this.voiced += (v - this.voiced) * Math.min(1, dt * 8);
-    // onset: level jumps ≥ 9 dB over its slow average
-    const onset = !silent && lvl - this.levelSlow > 9 && this.clock - this.lastOnset > 0.12;
+    // onset: level jumps ≥ 9 dB over its slow average — or the engine's transient-only punchM
+    // rises 6 dB over its own slow average (hits inside music or speech, where the RMS level
+    // barely jumps, still burst; 2026-11-13 사용자)
+    const pm = f.punchM;
+    const pEdge = pm > this.punchSlow + 6 && pm > -45 && this.clock - this.lastOnset > 0.12;
+    this.punchSlow += (pm - this.punchSlow) * Math.min(1, dt * 3);
+    const onset = (!silent && lvl - this.levelSlow > 9 && this.clock - this.lastOnset > 0.12) || pEdge;
     if (onset) {
       this.lastOnset = this.clock;
       this.onsets.push(this.clock);
@@ -216,7 +222,7 @@ export class EmojiModule implements Module {
       this.shake = 1;
       this.impact = 1;
       // strength 0…1 over a 9…29 dB jump: a soft tick barely flickers, a hard hit fills the tile
-      this.impactPow = Math.max(0.05, Math.min(1, (lvl - this.levelSlow - 9) / 20));
+      this.impactPow = Math.max(0.05, Math.min(1, (lvl - this.levelSlow - 9) / 20), pEdge ? Math.min(1, (pm + 45) / 35) : 0);
     }
     this.impact = Math.max(0, this.impact - dt * 2.6);
     // rhythmic? intervals of the last 6 onsets agree within 15 %
