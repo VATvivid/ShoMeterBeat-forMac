@@ -72,6 +72,12 @@ export async function applyDock(mode: DockMode) {
   } catch { /* ignore */ }
 }
 
+/** Startup while undocked: make sure no AppBar reservation lingers from an earlier session of this process. */
+export async function releaseDockReservation() {
+  if (!inTauri) return;
+  await invoke("set_appbar", { edge: null, thickness: 0 }).catch(() => {});
+}
+
 export function dockLayoutKind() {
   return layoutKindFor(settings.dock);
 }

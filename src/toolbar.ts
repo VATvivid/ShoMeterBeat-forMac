@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { Frame } from "./engine/frame";
 import { inTauri, type Source } from "./engine/source";
 import type { Grid } from "./layout/grid";
-import { applyDock } from "./dock";
+import { applyDock, releaseDockReservation } from "./dock";
 import { buildModulesPanel, closeAllMenus, wireMenu } from "./modulespanel";
 import { applyPresetState, capturePreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
 import { layoutKindFor, onSettingsSynced, resetLayout, saveSettings, settings, type DockMode } from "./state";
@@ -75,6 +75,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
   buildDockPanel();
   wireMenu(dockBtn, dockPanel);
   if (settings.dock !== "none") setDock(settings.dock);
+  else releaseDockReservation();
 
   // ---- 창 menu: always on top, opacity, pop-out windows, find ---------------------
   const winBtn = $<HTMLButtonElement>("win-btn");
