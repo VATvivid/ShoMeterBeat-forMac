@@ -1,1 +1,1 @@
-export { resolvePush } from "../src/layout/grid";
+export { resolvePush, resolveSwap } from "../src/layout/grid";

@@ -24,6 +24,11 @@ function savePops(list: PopWin[]) {
   try { localStorage.setItem(KEY, JSON.stringify(list)); } catch { /* ignore */ }
 }
 export function popEntry(label: string): PopWin | undefined { return loadPops().find((p) => p.label === label); }
+/** Drops a pop-out from the list and deletes its layout key (the window itself is closed by the caller). */
+export function forgetPop(label: string) {
+  try { localStorage.removeItem(popLayoutKey(label)); } catch { /* ignore */ }
+  savePops(loadPops().filter((p) => p.label !== label));
+}
 export function updatePop(label: string, patch: Partial<PopWin>) {
   const list = loadPops();
   const e = list.find((p) => p.label === label);
@@ -98,8 +103,7 @@ export async function restorePops() {
 /** Closes a pop-out and brings its modules back into this (main) grid, appended. */
 export async function closePop(label: string, grid: Grid) {
   for (const m of popModules(label)) grid.add(m.id, m.w, m.h);
-  try { localStorage.removeItem(popLayoutKey(label)); } catch { /* ignore */ }
-  savePops(loadPops().filter((p) => p.label !== label));
+  forgetPop(label);
   const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
   const w = await WebviewWindow.getByLabel(label);
   // destroy(): skips the close-requested round trip (the pop-out would ask us again).

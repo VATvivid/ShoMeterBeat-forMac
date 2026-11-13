@@ -124,7 +124,8 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
   }
   wireMenu(winBtn, winPanel, buildWinPanel);
   if (inTauri) {
-    listen<{ label: string }>("rm://pop-close-request", (e) => closePop(e.payload.label, grid)).catch(() => {});
+    listen<{ label: string }>("rm://pop-close-request", (e) => closePop(e.payload.label, grid).then(buildWinPanel)).catch(() => {});
+    listen("rm://pop-closed", () => buildWinPanel()).catch(() => {});
     restorePops().catch((e) => console.error(e));
   }
   onSettingsSynced(() => { /* per-module settings changed in a pop-out: modules read them live */ });

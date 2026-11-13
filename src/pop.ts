@@ -6,7 +6,9 @@ import { inTauri } from "./engine/source";
 import type { Grid } from "./layout/grid";
 import { buildModulesPanel, wireMenu } from "./modulespanel";
 import { WIN_LABEL } from "./state";
-import { applyOpacity, flashAll, saveWindowPrefs, setAlwaysOnTop, updatePop, windowPrefs } from "./windows";
+import { applyOpacity, flashAll, forgetPop, saveWindowPrefs, setAlwaysOnTop, updatePop, windowPrefs } from "./windows";
+
+let closing = false;
 
 export function initPop(grid: Grid) {
   document.title = "re-minimeter 창";
@@ -59,7 +61,7 @@ export function initPop(grid: Grid) {
 
   const close = document.createElement("button");
   close.className = "btn icon"; close.title = "창 닫기 (모듈은 메인 창으로)"; close.textContent = "✕";
-  close.addEventListener("click", () => requestClose());
+  close.addEventListener("click", () => requestClose(grid));
 
   bar.append(drag, pin, op, menu, edit, find, close);
   const grip = document.createElement("div");
@@ -85,10 +87,22 @@ export function initPop(grid: Grid) {
     w.onMoved(save).catch(() => {});
     w.onResized(save).catch(() => {});
     // Alt+F4 etc. go through the main window so the modules come back there.
-    w.onCloseRequested((e) => { e.preventDefault(); requestClose(); }).catch(() => {});
+    w.onCloseRequested((e) => { if (closing) return; e.preventDefault(); requestClose(grid); }).catch(() => {});
   }).catch((e) => console.error(e));
 }
 
-function requestClose() {
-  emit("rm://pop-close-request", { label: WIN_LABEL }).catch((e) => console.error(e));
+/** Hands every module to the main window, forgets this pop-out and closes it. */
+async function requestClose(grid: Grid) {
+  if (closing) return;
+  closing = true;
+  for (const id of grid.activeIds) {
+    const r = grid.layout[id];
+    await emit("rm://to-main", { id, w: r.w, h: r.h }).catch((e) => console.error(e));
+  }
+  forgetPop(WIN_LABEL);
+  await emit("rm://pop-closed", { label: WIN_LABEL }).catch(() => {});
+  if (!inTauri) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const w = getCurrentWindow();
+  await w.destroy().catch(async (e) => { console.error("destroy", e); await w.close().catch((e2) => { console.error("close", e2); closing = false; }); });
 }

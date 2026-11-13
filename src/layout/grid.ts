@@ -11,7 +11,7 @@
 import type { Frame } from "../engine/frame";
 import { minSize, MODULES } from "../modules";
 import type { Module } from "../modules/types";
-import { effectiveDims, GRID_DIMS, layouts, saveLayout, type Layout, type LayoutKind } from "../state";
+import { effectiveDims, GRID_DIMS, layouts, saveLayout, saveSettings, settings, type Layout, type LayoutKind } from "../state";
 import { showContextMenu, type MenuAction } from "./contextmenu";
 
 interface Tile {
@@ -72,6 +72,34 @@ export function resolvePush(layout: Layout, movingId: string, target: Rect, kind
   }
   return out;
 }
+
+/**
+ * Swap placement: the mover goes to `target`; if exactly one tile lies under it, that tile
+ * takes the mover's old top-left (keeping its own size) when it fits there without
+ * touching anything else. Nothing else moves. Returns null when the drop is not allowed
+ * (two or more tiles under it, or the swapped tile would not fit).
+ */
+export function resolveSwap(layout: Layout, movingId: string, target: Rect, origin: Rect, kind: LayoutKind): Record<string, Rect> | null {
+  const others = Object.entries(layout).filter(([id, r]) => id !== movingId && r.on);
+  const under = others.filter(([, r]) => overlap(target, r));
+  const out: Record<string, Rect> = { [movingId]: { ...target } };
+  if (under.length === 0) return out;
+  if (under.length > 1) return null;
+  const [bid, b] = under[0];
+  const moved: Rect = { x: origin.x, y: origin.y, w: b.w, h: b.h };
+  if (kind === "dockh") moved.y = 0;
+  if (kind === "dockv") moved.x = 0;
+  const cols = kind === "normal" ? Math.max(GRID_DIMS.normal.cols, target.x + target.w) : GRID_DIMS[kind].cols;
+  if (moved.x + moved.w > cols && kind !== "normal") return null;
+  if (overlap(moved, target)) return null;
+  for (const [oid, r] of others) if (oid !== bid && overlap(moved, r)) return null;
+  out[bid] = moved;
+  return out;
+}
+
+/** Edge zone (CSS px) inside the grid where a dragged tile grows the grid by one cell every GROW_MS. */
+const GROW_EDGE = 22;
+const GROW_MS = 380;
 
 export class Grid {
   private tiles = new Map<string, Tile>();
@@ -242,6 +270,7 @@ export class Grid {
     const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
+      { label: settings.layoutMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 밀어내기)" : "배치 방식: 밀어내기 ✓ (→ 자리 바꾸기)", onClick: () => { settings.layoutMode = settings.layoutMode === "swap" ? "push" : "swap"; saveSettings(); } },
       ...extra,
       { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
@@ -348,6 +377,9 @@ export class Grid {
       let next: Rect = { ...start };
       let outside = false;       // pointer left this window (cross-window move)
       let lastHover = 0;
+      const base = this.dims();
+      let growX = 0, growY = 0, lastGrowX = 0, lastGrowY = 0; // cells added by holding the tile at the right / bottom edge
+      let valid = true;
       t.el.classList.add("dragging");
       t.el.style.zIndex = String(++this.z);
       this.ghost.style.display = "block";
@@ -357,6 +389,14 @@ export class Grid {
         const dy = Math.round((ev.clientY - sy) / (ch + GUTTER));
         if (mode === "move") {
           next = { ...start, x: Math.max(0, Math.min(maxX - start.w, start.x + dx)), y: Math.max(0, Math.min(maxY - start.h, start.y + dy)) };
+          // Holding the tile against the grid's right / bottom edge grows the grid one cell at a time.
+          const rr = this.root.getBoundingClientRect();
+          const now = performance.now();
+          if (this.kind !== "dockv" && ev.clientX >= rr.right - GROW_EDGE && ev.clientX <= window.innerWidth) { if (now - lastGrowX > GROW_MS) { growX++; lastGrowX = now; } }
+          if (this.kind !== "dockh" && ev.clientY >= rr.bottom - GROW_EDGE && ev.clientY <= window.innerHeight) { if (now - lastGrowY > GROW_MS) { growY++; lastGrowY = now; } }
+          if (growX) next.x = Math.max(next.x, base.cols + growX - start.w);
+          if (growY) next.y = Math.max(next.y, base.rows + growY - start.h);
+          this.ghost.classList.toggle("grow", (growX > 0 && next.x + next.w > base.cols) || (growY > 0 && next.y + next.h > base.rows));
           // The dragged tile follows the pointer freely; everything else stays put.
           const p = this.rectPx(start);
           Object.assign(t.el.style, { left: `${p.left + (ev.clientX - sx)}px`, top: `${p.top + (ev.clientY - sy)}px` });
@@ -373,7 +413,10 @@ export class Grid {
           return;
         }
         if (outside) { outside = false; this.ghost.style.display = "block"; this.onXDrag?.leave(); }
-        const resolved = resolvePush(this.layout, t.id, next, this.kind);
+        const swap = mode === "move" && settings.layoutMode === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
+        valid = !(mode === "move" && settings.layoutMode === "swap" && swap === null);
+        this.ghost.classList.toggle("invalid", !valid);
+        const resolved = swap ?? (valid ? resolvePush(this.layout, t.id, next, this.kind) : { [t.id]: { ...next } });
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
         this.showGuides(resolved, t.id);
@@ -387,6 +430,7 @@ export class Grid {
         try { target.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
         t.el.classList.remove("dragging");
         this.ghost.style.display = "none";
+        this.ghost.classList.remove("invalid", "grow");
         this.hideGuides();
         if (outside && ev.type === "pointerup") {
           // Dropped outside this window: hand the module to the window under the pointer.
@@ -399,6 +443,7 @@ export class Grid {
           return;
         }
         if (outside) { this.onXDrag?.leave(); this.preview = null; this.place(t); return; }
+        if (!valid) { this.preview = null; this.place(t); return; } // swap mode: nowhere to put the tile under it — snap back
         const resolved = this.preview ?? resolvePush(this.layout, t.id, next, this.kind);
         this.preview = null;
         for (const [id, r] of Object.entries(resolved)) Object.assign(this.layout[id], r);

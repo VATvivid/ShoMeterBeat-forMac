@@ -18,6 +18,11 @@ import { modSetting, setModSetting } from "../state";
 // mastered to the same peak and differ by only a few dB — those few dB must spread.
 // Calibrated on a set of 36 game hit sounds (normal / double / critical tiers): punch
 // alone was flat across tiers (±2 dB) while body stepped 2–3 dB per tier.
+//
+// Differentiation: the number is absolute, but the glove size and the bar colours are
+// *relative to the hits on screen* (range of the recent hits, at least 20 index points),
+// so two variants that differ by a few points still look clearly different: the weakest
+// recent hit is small and dim, the strongest is big and warm. Switchable to absolute.
 
 const PAD = 8;
 const IDX_LO = -45, IDX_HI = -10, IDX_GAMMA = 2;   // 강도 dB → 0…100
@@ -79,6 +84,7 @@ export class PunchModule implements Module {
   private get basis() { return modSetting(this.id, "basis", "blend") as Basis; }
   private get showFlash() { return modSetting(this.id, "flash", true); }
   private get showGlove() { return modSetting(this.id, "glove", true); }
+  private get relative() { return modSetting(this.id, "relative", true); }
   private get ref(): PunchHit | null { return modSetting<PunchHit | null>(this.id, "ref", null); }
 
   settings(): SettingItem[] {
@@ -88,6 +94,7 @@ export class PunchModule implements Module {
       { type: "select", label: "히트 이력", value: String(this.histN), options: [15, 30, 60].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "hist", Number(v)) },
       { type: "toggle", label: "화려함 지수 표시", value: this.showFlash, onChange: (v) => setModSetting(this.id, "flash", v) },
       { type: "toggle", label: "글러브 이모지", value: this.showGlove, onChange: (v) => setModSetting(this.id, "glove", v) },
+      { type: "toggle", label: "크기·색을 최근 히트 범위에 맞춤 (상대 표시)", value: this.relative, onChange: (v) => setModSetting(this.id, "relative", v) },
       { type: "action", label: "마지막 히트를 기준으로", onClick: () => { const h = this.hits[this.hits.length - 1]; if (h) setModSetting(this.id, "ref", h); } },
       { type: "action", label: "기준 해제", onClick: () => setModSetting(this.id, "ref", null) },
       { type: "action", label: "이력·세션 통계 초기화", onClick: () => { this.hits = []; getSource()?.punchReset().catch(() => {}); } },
@@ -99,6 +106,17 @@ export class PunchModule implements Module {
     const body = h.body_db ?? h.punch_db;
     return this.basis === "punch" ? h.punch_db : this.basis === "body" ? body : 0.35 * h.punch_db + 0.65 * body;
   }
+  /** 0…1 position of a strength index among the recent hits (span padded to ≥ 20 points); absolute index/100 when off. */
+  private rel(idx: number): number {
+    if (!this.relative) return idx / 100;
+    const shown = this.hits.slice(-this.histN);
+    if (shown.length < 2) return idx / 100;
+    let lo = Infinity, hi = -Infinity;
+    for (const h of shown) { const v = this.index(this.strengthDb(h)); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    const mid = (lo + hi) / 2, span = Math.max(20, hi - lo);
+    return Math.max(0, Math.min(1, (idx - (mid - span / 2)) / span));
+  }
+  private tierColor(r: number): string { return r < 0.34 ? theme("fg-1") : r < 0.67 ? theme("sig") : theme("peak"); }
   private index(db: number) { return 100 * Math.pow(Math.max(0, Math.min(1, (db - IDX_LO) / (IDX_HI - IDX_LO))), IDX_GAMMA); }
   private fmtDb(db: number) { return `${db.toFixed(1).replace("-", "−")} dB`; }
   private fmt(db: number) { return this.scale === "index" ? `${this.index(db).toFixed(0)}` : this.fmtDb(db); }
@@ -173,7 +191,7 @@ export class PunchModule implements Module {
     this.jab = Math.max(0, this.jab - dt * 3);
     const last = this.hits[this.hits.length - 1] ?? null;
     {
-      const ts = last ? this.index(this.strengthDb(last)) / 100 : 0, tg = last ? last.flash / 100 : 0;
+      const ts = last ? this.rel(this.index(this.strengthDb(last))) : 0, tg = last ? last.flash / 100 : 0;
       const k = Math.min(1, dt * 8);
       this.gloveScale += (ts - this.gloveScale) * k;
       this.gloveGlow += (tg - this.gloveGlow) * k;
@@ -189,10 +207,21 @@ export class PunchModule implements Module {
       ctx.textBaseline = "top"; ctx.textAlign = "left";
       ctx.fillStyle = theme("fg-1"); ctx.font = font(10, 600);
       ctx.fillText("강도", PAD, y + 2);
-      ctx.fillStyle = last ? theme("fg-0") : theme("fg-2"); ctx.font = font(short ? 18 : 24, 600);
+      const lastRel = last ? this.rel(this.index(this.strengthDb(last))) : 0;
+      ctx.fillStyle = last ? this.tierColor(lastRel) : theme("fg-2"); ctx.font = font(short ? 18 : 24, 600);
       const big = last ? this.fmt(this.strengthDb(last)) : "—";
       ctx.fillText(big, PAD + 32, y - 4);
-      let x = PAD + 32 + ctx.measureText(big).width + 14;
+      let x = PAD + 32 + ctx.measureText(big).width + 6;
+      const prev = this.hits.length > 1 ? this.hits[this.hits.length - 2] : null;
+      if (last && prev) {
+        // change against the previous hit, in the current scale
+        const a = this.strengthDb(last), b = this.strengthDb(prev);
+        const dv = this.scale === "index" ? this.index(a) - this.index(b) : a - b;
+        const txt = `${dv >= 0 ? "▲" : "▼"}${Math.abs(dv).toFixed(this.scale === "index" ? 0 : 1)}`;
+        ctx.fillStyle = dv >= 0 ? theme("peak") : theme("fg-2"); ctx.font = font(12, 600);
+        ctx.fillText(txt, x, y + 2);
+        x += ctx.measureText(txt).width + 12;
+      } else x += 8;
       if (last && !narrow) {
         const parts: [string, string][] = [["타격", this.fmtDb(last.punch_db)], ["무게", this.fmtDb(last.body_db ?? last.punch_db)], ["어택", `${last.attack_ms.toFixed(0)} ms`]];
         if (this.showFlash) parts.push(["화려함", `${Math.round(last.flash)}`]);
@@ -255,7 +284,7 @@ export class PunchModule implements Module {
   /** Glove centred at (cx, cy); `side` is the column — a weak hit uses ~55 % of it, a strong one ~100 %. */
   private drawGlove(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: number, hasHit: boolean) {
     const s = this.gloveScale, g = this.gloveGlow;
-    const scale = (0.5 + 0.5 * s) * (1 + 0.2 * Math.sin(this.jab * Math.PI));
+    const scale = (0.32 + 0.68 * s) * (1 + 0.2 * Math.sin(this.jab * Math.PI));
     const size = side * scale;
     const x0 = cx - size / 2 + 4 * Math.sin(this.jab * Math.PI);
     const y0 = cy - size / 2;
@@ -357,7 +386,8 @@ export class PunchModule implements Module {
       const sdb = this.strengthDb(hit);
       const yv = yOf(sdb);
       const a = isLast ? 0.95 : 0.55 + (isRef ? 0.4 : 0);
-      ctx.fillStyle = withAlpha(isRef ? theme("peak") : theme("sig"), a);
+      const tier = this.tierColor(this.rel(this.index(sdb)));
+      ctx.fillStyle = withAlpha(isRef ? theme("peak") : tier, a);
       ctx.fillRect(bx + 1, yv, Math.max(1, bw - 2), r.y + ph - yv);
       if (isLast && this.flashAnim > 0) {
         ctx.fillStyle = withAlpha(theme("fg-0"), this.flashAnim * 0.6);
@@ -375,7 +405,7 @@ export class PunchModule implements Module {
     }
     if (labelH) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "left"; ctx.textBaseline = "top";
-      ctx.fillText(`히트 ${shown.length}/${n}${this.showFlash ? " · ▬ 화려함" : ""}${ref ? " · ▬ 기준" : ""}`, r.x + 2, r.y + ph + 2);
+      ctx.fillText(`히트 ${shown.length}/${n}${this.relative ? " · 색 = 최근 범위 내 약/중/강" : ""}${this.showFlash ? " · ▬ 화려함" : ""}${ref ? " · ▬ 기준" : ""}`, r.x + 2, r.y + ph + 2);
     }
   }
 }
