@@ -90,9 +90,9 @@ export function defaultLayout(kind: LayoutKind): Layout {
   }
   return {
     spectrum: { x: 0, y: 0, w: 12, h: 7, on: true },
-    loudness: { x: 12, y: 0, w: 6, h: 7, on: true },
-    levels: { x: 18, y: 0, w: 3, h: 7, on: true },
-    scope: { x: 21, y: 0, w: 3, h: 7, on: true },
+    loudness: { x: 12, y: 0, w: 12, h: 7, on: true },
+    levels: { x: 0, y: 30, w: 3, h: 6, on: true },
+    scope: { x: 3, y: 30, w: 9, h: 6, on: true },
     spectrogram: { x: 0, y: 7, w: 7, h: 9, on: true },
     stereo: { x: 7, y: 7, w: 4, h: 9, on: true },
     tract: { x: 11, y: 7, w: 4, h: 9, on: true },
@@ -104,9 +104,9 @@ export function defaultLayout(kind: LayoutKind): Layout {
     transient: { x: 19, y: 16, w: 5, h: 7, on: true },
     player: { x: 0, y: 23, w: 12, h: 7, on: true },
     variation: { x: 12, y: 23, w: 12, h: 7, on: true },
-    subtitles: { x: 0, y: 30, w: 12, h: 5, on: false },
-    emoji: { x: 12, y: 30, w: 4, h: 5, on: false },
-    punch: { x: 16, y: 30, w: 8, h: 7, on: false },
+    subtitles: { x: 12, y: 30, w: 12, h: 6, on: false },
+    emoji: { x: 0, y: 36, w: 4, h: 5, on: false },
+    punch: { x: 4, y: 36, w: 12, h: 7, on: false },
   };
 }
 

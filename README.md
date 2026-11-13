@@ -9,7 +9,7 @@ Windows에서 나는 모든 소리(브라우저, 게임, REAPER 같은 DAW, 언�
 - **Oscilloscope** — 트리거 오실로스코프(L/R)
 - **Stereo** — 리사주(벡터스코프) + 상관 미터
 - **Levels** — 헤더에서 Peak / True Peak / RMS / LUFS(M·S) 선택, 피크 홀드, 클립 표시
-- **Loudness** — Momentary / Short-term / Integrated / LRA / True Peak + 60초 히스토리, 타깃 프리셋(YouTube/Spotify −14, 팟캐스트 −16, −18, EBU −23, ATSC −24)
+- **Loudness** — (기본 폭 12칸) 왼쪽 읽기값(Integrated·Range·Momentary·Short-term·True peak max·타깃), 가운데 **LUFS 미터**(Levels처럼 M/S 막대, 타깃 선, 피크 홀드, 타깃 초과 빨강), 오른쪽 **볼륨 흔적**(Waveform처럼 최근 60초 — Short-term을 아래에서 채운 띠, Momentary를 선으로, 타깃 점선), 맨 오른쪽 **분포**(Dynamics처럼 60초간 Short-term의 1 LU 히스토그램 + 중앙값). 좁아지면 분포 → 미터 순으로 빠짐. 기존 설명: Momentary / Short-term / Integrated / LRA / True Peak + 60초 히스토리, 타깃 프리셋(YouTube/Spotify −14, 팟캐스트 −16, −18, EBU −23, ATSC −24)
 - **Vocal Tract** — 들어오는 소리에서 LPC로 추정한 F1/F2를 **보정된 모음 조음표**(22개 모음 × 남/여/아동, 혀 몸통·혀끝·턱·입술·후두 값, chimera-vocal-synth 데이터·MIT)에 대어 가장 가까운 4개를 섞어 측면도를 움직인다. 턱은 과두를 축으로 회전, 혀는 몸통 원+혀끝, 입술은 개구·돌출, 후두는 모음과 피치에 따라 오르내림. 디테일: 혀·턱·입술 잔상, 기도 압력 열색, 최소 협착 캘리퍼(cm), 성대 f0 진동, 척추·기관·설골·비강·눈(시선·깜빡임, 고음에서 위로). **호흡·마찰음**은 잡음도(스펙트럼 평탄도)와 밝기(스펙트럼 중심)로 잡아 성대를 벌리고 흰 난류 점을 뿌린다(어두운 "h"는 성문, 밝은 "s/f"는 치아·입술). 규칙적인 숨은 분당 호흡수로, 폐 게이지는 추정 폐활량. 우클릭에서 음성 유형(남/여/아동).
 - **Vowel Map** — F1–F2 모음 포먼트 지도(IPA 기준 모음 10개, 실시간 마커와 1.5초 궤적, 가장 가까운 모음 표시)
 - **Pitch** — 피아노롤식 노트 블록(반음 단위로 묶음) + 정확한 피치 곡선, 음이름·센트 편차, 자동 음역 추적(1~3옥타브), 시간 범위 5~30초
@@ -18,7 +18,7 @@ Windows에서 나는 모든 소리(브라우저, 게임, REAPER 같은 DAW, 언�
 - **Stereo Bands** — 저(<150)/중저/중/고 대역별 상관(−1…+1)과 폭(사이드 비율), 저역 모노 호환 경고
 - **Variation Map** — 엔진이 온셋마다 클립(−20~+320 ms)을 잘라 58차원 특징을 뽑는다: **스펙트로-템포럴 패치**(4 시간 슬라이스 0–60/60–120/120–200/200–340 ms × 12 바크 밴드쌍, 클립 평균 대비 dB — 밴드별로 어택·몸통·꼬리가 어떻게 움직이는지), 중심·대역폭·롤오프·평탄도, 어택·감쇠·길이, 크레스트·피크·ZCR. 모듈은 이를 **세 그룹 — 음색(밴드 평균+스펙트럼 서술자) · 시간(패치의 밴드별 포락선 편차+어택/감쇠/길이) · 세기(크레스트·피크)** 로 나눠 각 그룹의 총 가중치를 같게 맞춘 뒤(우클릭 슬라이더 ×0~2) 표준화 → PCA 2D → 온라인 군집(반경 설정)으로 점을 찍는다. 밝기만으로 축이 정해지지 않게 하기 위한 구조다. 지도 아래 **신규성 띠**: 히트마다 직전 같은 군집 히트와의 거리를 군집 반경 대비 %로 막대 표시(동일 판정 거리 이하면 빨강, 새 군집이면 빈 막대), 글자는 가장 달라진 그룹(음/시/세). 같은 군집이 연속 N회 거의 같은 특징으로 터지면 **반복 감지 경고**. 발소리·피격·총성 랜덤화가 실제로 다르게 들리는지 보는 용도. 외부 모델 없음
 - **Subtitles** — whisper.cpp(로컬 CPU)로 들어오는 말소리를 자막으로. 레벨 게이트로 발화를 나눠(0.6~10초) 끝날 때마다 인식하므로 **2~6초 지연**. 언어 자동/한국어/영어/일본어/중국어, 모델 base(빠름)·small(정확, 한국어 권장)·medium, TXT/SRT 저장. 모델은 설치본에 없음: `python scripts/fetch_models.py --whisper small` 또는 `%APPDATA%\re-minimeter\models\ggml-small.bin`
-- **Player** — 오디오 파일(WAV·AIFF·FLAC·MP3·OGG·AAC)을 타일에 **끌어다 놓으면** 전체 파형과 재생 컨트롤(▶/⏸, ■, ↻ 반복, 파형 클릭으로 탐색). 재생은 Web Audio로 기본 출력 장치에 나가므로 루프백 모드면 다른 모듈이 같이 반응한다. 파일 전체를 오프라인 분석해 길이·SR·채널·**LUFS-I·LRA·True Peak·Peak·RMS·Crest·BPM(신뢰도·구간 일치율)** 을 표시(최대 10분)
+- **Player** — 파일의 템포가 구간마다 다르면(8초 창·2초 간격으로 재추정, 4 % 이상 달라지고 두 창 연속이면 새 구간) 파형 위에 **BPM 마커**(점선 + "128 BPM")가 구간 시작마다 붙는다. 기존 설명: 오디오 파일(WAV·AIFF·FLAC·MP3·OGG·AAC)을 타일에 **끌어다 놓으면** 전체 파형과 재생 컨트롤(▶/⏸, ■, ↻ 반복, 파형 클릭으로 탐색). 재생은 Web Audio로 기본 출력 장치에 나가므로 루프백 모드면 다른 모듈이 같이 반응한다. 파일 전체를 오프라인 분석해 길이·SR·채널·**LUFS-I·LRA·True Peak·Peak·RMS·Crest·BPM(신뢰도·구간 일치율)** 을 표시(최대 10분)
 - **Spectrum 레퍼런스** — 우클릭 "레퍼런스 추가…" 또는 **Spectrum 타일에 파일을 드롭**하면 파일의 평균 스펙트럼을 프리셋(파일명)으로 저장, 선택하면 노란 점선으로 겹쳐 보임. "레벨 자동 맞춤"은 100 Hz~10 kHz 중앙값을 라이브에 맞춰 재생 레벨 차이를 지움. 포맷은 Player와 같음
 - **Waveform · AI 태그** — 우클릭 "AI 태그 (YAMNet)"를 켜면 Google YAMNet(AudioSet 521 클래스, ONNX, 로컬 CPU)이 0.5~2초마다 최근 1초를 분류해 파형 위에 마커(라벨·점수)를 찍는다. 필터(음성/음악/효과음/기타)·최소 점수·간격 조절, 끄면 비용 0. 모델은 `scripts/fetch_models.py`로 `src-tauri/models/`에 받는다(설치본엔 포함)
 - **Waveform** — 최근 2~120초 파형(min/max 포락선). dB 스케일은 ± 대칭이 아니라 **아래에서 올라오는 레벨 이력**(0 … −60 dBFS)으로 그린다. 타일 안을 **드래그하면 스크롤이 멈추고** 구간이 선택되며, "WAV 저장"으로 그 구간을 엔진의 2분 이력에서 32-bit float 스테레오 WAV로 렌더해 저장한다(Esc·취소로 재개). **"↗ DAW로 끌기"** 버튼을 누른 채 REAPER 등 DAW 트랙에 끌어다 놓으면 그 구간이 WAV로 배치된다 — 파일은 클립 폴더(기본 `문서\re-minimeter\clips`, 우클릭에서 변경)에 남는다(DAW가 그 경로를 참조하므로 지우지 않는다; 끌기를 취소하면 삭제)
@@ -65,9 +65,10 @@ ASIO로 동작하는 DAW(REAPER, Cubase/Nuendo, Ableton, Studio One, Bitwig…)�
 - 설치본: `npm run tauri build` (자막 포함: `npm run tauri build -- --features subtitles`, LLVM·CMake 필요)
 
 ## 다른 PC에 설치 (팀 배포)
-- 배포물은 `src-tauri/target/release/bundle/nsis/re-minimeter_<버전>_x64-setup.exe` 하나(약 21 MB). 사용자별 설치(관리자 권한 불필요), 시작 메뉴 등록, 제거 가능. 안에 YAMNet 모델·ONNX Runtime·DAW 플러그인(CLAP/VST3)이 들어 있다.
+- 배포물은 `src-tauri/target/release/bundle/nsis/re-minimeter_<버전>_x64-setup.exe` 하나(약 170 MB). 사용자별 설치(관리자 권한 불필요, 한국어/영어), 시작 메뉴 등록, 제거 가능. 안에 YAMNet 모델·ONNX Runtime·DAW 플러그인(CLAP/VST3)·**자막 base 모델**이 들어 있고, WebView2가 없는 PC면 동봉된 부트스트래퍼가 조용히 설치한다. **첫 실행 때 DAW 플러그인이 사용자 플러그인 폴더에 자동으로 복사**되므로 받는 사람은 설치본 실행 외에 할 일이 없다.
 - 받는 PC 요건: Windows 10/11 64비트, **WebView2 런타임**(Win11·최신 Win10엔 기본 포함; 없으면 설치본이 부트스트래퍼로 내려받음 — 인터넷 필요). 코드 서명이 없어 첫 실행 때 SmartScreen "추가 정보 → 실행"을 눌러야 한다.
-- 자막(whisper) 모델은 용량 때문에 **포함되지 않는다**. 자막을 쓰려면 `ggml-base.bin`/`ggml-small.bin`을 `%APPDATA%e-minimeter\models\`에 넣는다(모듈이 경로를 안내).
+- 자막 모델은 base(148 MB)만 들어 있다. 더 정확한 small(488 MB)을 쓰려면 `ggml-small.bin`을 `%APPDATA%e-minimeter\models\`에 넣는다(모듈이 경로를 안내).
+e-minimeter\models\`에 넣는다(모듈이 경로를 안내).
 - 소리 입력: 기본은 기본 출력 장치 루프백이라 추가 설정 없이 동작한다. 입력 장치 캡처는 Windows 마이크 개인정보 설정 허용이 필요. DAW 플러그인은 앱 메뉴 "플러그인 설치"로 사용자 플러그인 폴더에 복사된다.
 - 라이선스: 앱 본체 의존성은 MIT/Apache/ISC(`THIRD_PARTY_NOTICES.md`). 동봉 VST3 플러그인은 nih-plug의 VST3 export가 GPLv3라 **회사 밖으로 재배포할 때는** 소스 공개 의무를 확인해야 한다(사내 팀 배포는 같은 조직 내 사용). CLAP 빌드는 ISC.
 - 설정·레이아웃은 PC마다 `%LOCALAPPDATA%\com.vatvivid.re-minimeter\` 아래 WebView2 저장소에 따로 쌓인다. 프리셋은 JSON으로 내보내 공유할 수 있다.

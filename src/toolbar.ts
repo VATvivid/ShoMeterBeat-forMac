@@ -307,6 +307,18 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
   populateDevices().catch((e) => console.error(e));
 
   // ---- DAW plugin install --------------------------------------------------------
+  // First run on this PC: copy the bundled CLAP/VST3 into the user plugin folders once,
+  // so a teammate has nothing to click after installing (the button stays for re-installs).
+  if (inTauri) {
+    try {
+      if (!localStorage.getItem("rm.plugins.installed.v1")) {
+        source.installPlugins().then((paths) => {
+          try { localStorage.setItem("rm.plugins.installed.v1", new Date().toISOString()); } catch { /* ignore */ }
+          notice(`첫 실행: DAW 플러그인을 설치했습니다 → ${paths.join(" , ")} (DAW에서 플러그인 재스캔)`, "ok", 15000);
+        }).catch((e) => notice(`플러그인 자동 설치 실패: ${String(e)} — 메뉴에서 다시 시도`, "err", 10000));
+      }
+    } catch { /* ignore */ }
+  }
   $("install-plugin-btn").addEventListener("click", async () => {
     try {
       const paths = await source.installPlugins();

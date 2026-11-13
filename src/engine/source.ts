@@ -68,6 +68,8 @@ export interface LoadedAudio { sr: number; channels: number; frames: number; sam
 export interface FileAnalysis {
   duration: number; sample_rate: number; channels: number; lufs_i: number; lra: number; true_peak: number;
   sample_peak: number; rms: number; crest: number; bpm: number; bpm_confidence: number; bpm_agreement: number;
+  /** Tempo over time: one segment for a steady file, several when it changes (t in seconds). */
+  tempo_segments: { t0: number; t1: number; bpm: number; confidence: number }[];
 }
 
 export function parseLoadedAudio(buf: ArrayBuffer): LoadedAudio | null {
@@ -329,7 +331,7 @@ class MockSource implements Source {
     return { momentary: -40 + 26 * beat, tsr: -6 + 14 * beat, pm95: -15.5, mean: -31.2, frames: Math.floor(this.t * 187) };
   }
   async punchReset() { this.punchSeq = 0; }
-  async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9 }; }
+  async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9, tempo_segments: [{ t0: 0, t1: 3.5, bpm: 120, confidence: 0.8 }, { t0: 3.5, t1: 8, bpm: 140, confidence: 0.7 }] }; }
 }
 
 export function createSource(): Source {

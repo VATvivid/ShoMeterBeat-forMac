@@ -137,9 +137,91 @@ pub fn estimate(flux: &[f32], prior_bpm: f32) -> Tempo {
     Tempo { bpm, confidence, agreement, trace: running }
 }
 
+/// One stretch of a file with a steady tempo (see [`segments`]).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TempoSeg {
+    pub t0: f32,
+    pub t1: f32,
+    pub bpm: f32,
+    pub confidence: f32,
+}
+
+const WIN_S: usize = 8;
+const HOP_S: usize = 2;
+
+/// Tempo over time: the estimator is run on 8 s windows every 2 s, and consecutive windows
+/// whose BPM stays within 4 % are merged into one segment. A new segment needs two windows
+/// in a row that agree with each other (one odd window is a blip, not a change). Windows
+/// with confidence < 0.2 or no tempo are skipped. Returns at most one segment for a file
+/// with a steady tempo.
+pub fn segments(flux: &[f32], prior_bpm: f32) -> Vec<TempoSeg> {
+    let win = WIN_S * RATE;
+    let hop = HOP_S * RATE;
+    let mut local: Vec<(f32, f32, f32)> = Vec::new(); // (t_centre, bpm, conf)
+    let mut start = 0usize;
+    while start + win <= flux.len() {
+        let t = estimate(&flux[start..start + win], prior_bpm);
+        if t.bpm > 0.0 && t.confidence >= 0.2 {
+            local.push(((start + win / 2) as f32 / RATE as f32, t.bpm, t.confidence));
+        }
+        start += hop;
+    }
+    let mut out: Vec<TempoSeg> = Vec::new();
+    let close = |a: f32, b: f32| (a / b - 1.0).abs() <= 0.04;
+    let mut i = 0usize;
+    while i < local.len() {
+        let (t, bpm, conf) = local[i];
+        match out.last_mut() {
+            Some(seg) if close(bpm, seg.bpm) => {
+                // running mean keeps the segment's BPM honest
+                let n = ((seg.t1 - seg.t0) / HOP_S as f32).max(1.0);
+                seg.bpm = (seg.bpm * n + bpm) / (n + 1.0);
+                seg.confidence = seg.confidence.max(conf);
+                seg.t1 = t + (WIN_S as f32) / 2.0;
+                i += 1;
+            }
+            Some(_) if i + 1 < local.len() && !close(local[i + 1].1, bpm) => {
+                i += 1; // a lone odd window: ignore it
+            }
+            _ => {
+                out.push(TempoSeg { t0: if out.is_empty() { 0.0 } else { t - (WIN_S as f32) / 2.0 }, t1: t + (WIN_S as f32) / 2.0, bpm, confidence: conf });
+                i += 1;
+            }
+        }
+    }
+    if let Some(last) = out.last_mut() {
+        last.t1 = flux.len() as f32 / RATE as f32;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tempo_change_makes_two_segments() {
+        let sr = 48_000u32;
+        let mut x = Vec::new();
+        for (secs, bpm) in [(24usize, 100.0f32), (24, 150.0)] {
+            let period = (sr as f32 * 60.0 / bpm) as usize;
+            let mut part = vec![0.0f32; sr as usize * secs];
+            for i in (0..part.len()).step_by(period) {
+                for k in 0..200 {
+                    if i + k < part.len() {
+                        part[i + k] = 0.8 * (1.0 - k as f32 / 200.0) * if k % 2 == 0 { 1.0 } else { -1.0 };
+                    }
+                }
+            }
+            x.extend(part);
+        }
+        let flux = flux_columns(&x, sr);
+        let segs = segments(&flux, 110.0);
+        assert!(segs.len() >= 2, "segments {:?}", segs);
+        assert!((segs[0].bpm - 100.0).abs() < 3.0, "first {:?}", segs[0]);
+        assert!((segs.last().unwrap().bpm - 150.0).abs() < 4.0, "last {:?}", segs.last());
+        assert!((segs[1].t0 - 24.0).abs() < 6.0, "change at {}", segs[1].t0);
+    }
 
     #[test]
     fn click_track_at_120_bpm() {

@@ -64,19 +64,95 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()>
 fn install_plugins(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let src = plugin_source_dir(&app).ok_or("번들된 플러그인 파일을 찾을 수 없습니다 (plugins/ 폴더)")?;
     let local = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 없음")?;
-    let common = std::path::Path::new(&local).join("Programs").join("Common");
+    install_plugins_from(&src, &std::path::Path::new(&local).join("Programs").join("Common"))
+}
+
+/// True when `dst` already holds exactly the bytes of `src` (so a locked, identical plugin
+/// — a DAW has it loaded — counts as installed and is left alone).
+fn same_file(src: &std::path::Path, dst: &std::path::Path) -> bool {
+    match (std::fs::metadata(src), std::fs::metadata(dst)) {
+        (Ok(a), Ok(b)) if a.len() == b.len() => matches!((std::fs::read(src), std::fs::read(dst)), (Ok(x), Ok(y)) if x == y),
+        _ => false,
+    }
+}
+
+/// Copies `src` over `dst` unless it is already identical. A copy that fails because the
+/// destination is in use (another process has it open) is reported as a warning, not an
+/// error, when a file already exists there: the DAW keeps its loaded copy, the next
+/// install (DAW closed) replaces it.
+fn copy_plugin_file(src: &std::path::Path, dst: &std::path::Path, warnings: &mut Vec<String>) -> Result<(), String> {
+    if same_file(src, dst) {
+        return Ok(());
+    }
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    match std::fs::copy(src, dst) {
+        Ok(_) => Ok(()),
+        Err(e) if dst.exists() && e.raw_os_error() == Some(32) => {
+            warnings.push(format!("{} 사용 중 — 기존 파일 유지 (DAW를 닫고 다시 설치하면 갱신)", dst.display()));
+            Ok(())
+        }
+        Err(e) => Err(format!("{} 복사 실패: {e}", dst.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())),
+    }
+}
+
+fn copy_plugin_dir(src: &std::path::Path, dst: &std::path::Path, warnings: &mut Vec<String>) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for e in std::fs::read_dir(src).map_err(|e| e.to_string())? {
+        let e = e.map_err(|e| e.to_string())?;
+        let t = dst.join(e.file_name());
+        if e.file_type().map_err(|e| e.to_string())?.is_dir() {
+            copy_plugin_dir(&e.path(), &t, warnings)?;
+        } else {
+            copy_plugin_file(&e.path(), &t, warnings)?;
+        }
+    }
+    Ok(())
+}
+
+/// Installs the bundled CLAP + VST3 under `common` (`%LOCALAPPDATA%\Programs\Common`).
+/// Returns the destination paths; entries may carry a trailing note when a file was in use.
+fn install_plugins_from(src: &std::path::Path, common: &std::path::Path) -> Result<Vec<String>, String> {
     let mut done = Vec::new();
+    let mut warnings = Vec::new();
     let clap_dst = common.join("CLAP").join(format!("{PLUGIN_NAME}.clap"));
-    std::fs::create_dir_all(clap_dst.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::copy(src.join(format!("{PLUGIN_NAME}.clap")), &clap_dst).map_err(|e| format!("CLAP 복사 실패: {e}"))?;
+    copy_plugin_file(&src.join(format!("{PLUGIN_NAME}.clap")), &clap_dst, &mut warnings)?;
     done.push(clap_dst.display().to_string());
     let vst_src = src.join(format!("{PLUGIN_NAME}.vst3"));
     if vst_src.exists() {
         let vst_dst = common.join("VST3").join(format!("{PLUGIN_NAME}.vst3"));
-        copy_dir(&vst_src, &vst_dst).map_err(|e| format!("VST3 복사 실패: {e}"))?;
+        copy_plugin_dir(&vst_src, &vst_dst, &mut warnings)?;
         done.push(vst_dst.display().to_string());
     }
+    done.extend(warnings.into_iter().map(|w| format!("※ {w}")));
     Ok(done)
+}
+
+#[cfg(test)]
+mod plugin_install_tests {
+    use super::*;
+
+    #[test]
+    fn identical_files_are_skipped_and_changed_ones_copied() {
+        let base = std::env::temp_dir().join(format!("rm-plugin-test-{}", std::process::id()));
+        let src = base.join("src");
+        let common = base.join("common");
+        std::fs::create_dir_all(src.join(format!("{PLUGIN_NAME}.vst3")).join("Contents")).unwrap();
+        std::fs::write(src.join(format!("{PLUGIN_NAME}.clap")), b"clap-v1").unwrap();
+        std::fs::write(src.join(format!("{PLUGIN_NAME}.vst3")).join("Contents").join("x.vst3"), b"vst-v1").unwrap();
+        let done = install_plugins_from(&src, &common).unwrap();
+        assert_eq!(done.len(), 2, "{done:?}");
+        assert_eq!(std::fs::read(common.join("CLAP").join(format!("{PLUGIN_NAME}.clap"))).unwrap(), b"clap-v1");
+        // second run: identical → still Ok, nothing to report
+        let again = install_plugins_from(&src, &common).unwrap();
+        assert_eq!(again.len(), 2);
+        // changed source → copied
+        std::fs::write(src.join(format!("{PLUGIN_NAME}.clap")), b"clap-v2").unwrap();
+        install_plugins_from(&src, &common).unwrap();
+        assert_eq!(std::fs::read(common.join("CLAP").join(format!("{PLUGIN_NAME}.clap"))).unwrap(), b"clap-v2");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 #[tauri::command]
@@ -190,6 +266,8 @@ struct FileAnalysis {
     bpm: f32,
     bpm_confidence: f32,
     bpm_agreement: f32,
+    /// Tempo over time (one entry for a steady file, more when the tempo changes).
+    tempo_segments: Vec<audio::tempo::TempoSeg>,
 }
 
 /// Whole-file loudness / peak / dynamics / tempo (≤ 10 min analysed).
@@ -228,6 +306,7 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
         bpm: t.bpm,
         bpm_confidence: t.confidence,
         bpm_agreement: t.agreement,
+        tempo_segments: audio::tempo::segments(&flux, prior_bpm.unwrap_or(110.0)),
     })
 }
 

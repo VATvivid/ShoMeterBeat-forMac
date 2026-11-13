@@ -235,6 +235,23 @@ export class PlayerModule implements Module {
       ctx.strokeStyle = theme("grid"); ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, y0); ctx.lineTo(Math.round(x) + 0.5, y1); ctx.stroke();
       ctx.fillText(fmtTime(s), x, y1 + 4);
     }
+    // tempo-change markers: when the file's tempo is not steady, mark where it changes
+    const segs = this.analysis?.tempo_segments ?? [];
+    if (segs.length >= 2) {
+      ctx.font = font(10, 600); ctx.textBaseline = "top";
+      segs.forEach((s, i) => {
+        const x = Math.round(x0 + (s.t0 / dur) * pw) + 0.5;
+        if (i > 0) {
+          ctx.strokeStyle = withAlpha(theme("target"), 0.9); ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke(); ctx.setLineDash([]);
+        }
+        const txt = `${s.bpm.toFixed(0)} BPM`;
+        const tw = ctx.measureText(txt).width + 6;
+        const lx = Math.min(x + 2, x1 - tw);
+        ctx.fillStyle = withAlpha(theme("bg-2"), 0.85); ctx.fillRect(lx, y0 + 2, tw, 13);
+        ctx.fillStyle = theme("target"); ctx.textAlign = "left"; ctx.fillText(txt, lx + 3, y0 + 3);
+      });
+    }
     // analysis readouts (top-right)
     const a = this.analysis;
     ctx.textAlign = "right"; ctx.textBaseline = "top";
