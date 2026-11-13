@@ -90,7 +90,7 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
   background-size: var(--cell-w) var(--cell-h); }
 .drop-ghost { position: absolute; border: 1px dashed var(--sig); border-radius: 4px; pointer-events: none; z-index: 5; }
 .drop-ghost.invalid { border-color: var(--clip); background: rgba(255, 77, 94, 0.08); }
-.grid-grow { position: absolute; display: none; z-index: 8; gap: 2px; align-items: center; padding: 2px; background: rgba(29, 32, 37, 0.9); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; color: var(--fg-1); }
+.grid-grow { position: absolute; display: none; z-index: 1000; /* above every tile (tiles raise their z-index when dragged) */ gap: 2px; align-items: center; padding: 2px; background: rgba(29, 32, 37, 0.9); border: 1px solid var(--line); border-radius: 4px; font-size: 10px; color: var(--fg-1); }
 .grid-grow.cols { right: 0; top: 50%; transform: translateY(-50%); flex-direction: column; }
 .grid-grow.rows { bottom: 0; left: 50%; transform: translateX(-50%); flex-direction: row; }
 .grid-grow .btn.icon { width: 18px; height: 18px; font-size: 13px; line-height: 1; }

@@ -310,7 +310,7 @@ export class Grid {
     const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
-      { label: settings.layoutMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 겹침 허용)" : "배치 방식: 겹침 허용 ✓ (→ 자리 바꾸기)", onClick: () => { settings.layoutMode = settings.layoutMode === "swap" ? "free" : "swap"; saveSettings(); } },
+      { label: settings.placeMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 겹침 허용)" : "배치 방식: 겹침 허용 ✓ (→ 자리 바꾸기)", onClick: () => { settings.placeMode = settings.placeMode === "swap" ? "free" : "swap"; saveSettings(); } },
       ...extra,
       { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
@@ -340,8 +340,8 @@ export class Grid {
 
   /**
    * Switch a module on, `w`×`h` cells, at the cell under a viewport point (centred on
-   * it) or appended after everything else when no point is given. Colliding tiles are
-   * pushed like in a drag.
+   * it) or appended after everything else when no point is given. In swap mode colliding
+   * tiles are pushed aside; in free mode (default) they are left alone (overlap allowed).
    */
   add(id: string, w: number, h: number, clientX?: number, clientY?: number) {
     if (!MODULES[id]) return;
@@ -358,7 +358,9 @@ export class Grid {
       target = this.kind === "dockh" ? { x: d.cols, y: 0, ...size } : { x: 0, y: d.rows, ...size };
     }
     this.layout[id] = { ...target, on: true };
-    const resolved = resolvePush(this.layout, id, target, this.kind);
+    // 겹침 허용 (default): the new tile lands where asked and nothing else moves; swap mode
+    // keeps the old behaviour of pushing colliding tiles aside so the new one gets its own room.
+    const resolved = settings.placeMode === "swap" ? resolvePush(this.layout, id, target, this.kind) : { [id]: { ...target } };
     for (const [oid, r] of Object.entries(resolved)) Object.assign(this.layout[oid], r);
     saveLayout(this.kind);
     this.root.classList.add("settling");
@@ -446,7 +448,7 @@ export class Grid {
         // move: free (default) → the tile goes where it is dropped, overlapping allowed, nothing else moves;
         //       swap → exchange with the one tile under it (null = not allowed → red ghost, snap back).
         // resize always just resizes (overlap allowed). resolvePush is only used when a module is added.
-        const lm = settings.layoutMode === "swap" ? "swap" : "free";
+        const lm = settings.placeMode === "swap" ? "swap" : "free";
         const swap = mode === "move" && lm === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
         valid = !(mode === "move" && lm === "swap" && swap === null);
         this.ghost.classList.toggle("invalid", !valid);

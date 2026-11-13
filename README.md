@@ -64,5 +64,13 @@ ASIO로 동작하는 DAW(REAPER, Cubase/Nuendo, Ableton, Studio One, Bitwig…)�
 - `npm install` → `npm run tauri dev`
 - 설치본: `npm run tauri build` (자막 포함: `npm run tauri build -- --features subtitles`, LLVM·CMake 필요)
 
+## 다른 PC에 설치 (팀 배포)
+- 배포물은 `src-tauri/target/release/bundle/nsis/re-minimeter_<버전>_x64-setup.exe` 하나(약 21 MB). 사용자별 설치(관리자 권한 불필요), 시작 메뉴 등록, 제거 가능. 안에 YAMNet 모델·ONNX Runtime·DAW 플러그인(CLAP/VST3)이 들어 있다.
+- 받는 PC 요건: Windows 10/11 64비트, **WebView2 런타임**(Win11·최신 Win10엔 기본 포함; 없으면 설치본이 부트스트래퍼로 내려받음 — 인터넷 필요). 코드 서명이 없어 첫 실행 때 SmartScreen "추가 정보 → 실행"을 눌러야 한다.
+- 자막(whisper) 모델은 용량 때문에 **포함되지 않는다**. 자막을 쓰려면 `ggml-base.bin`/`ggml-small.bin`을 `%APPDATA%e-minimeter\models\`에 넣는다(모듈이 경로를 안내).
+- 소리 입력: 기본은 기본 출력 장치 루프백이라 추가 설정 없이 동작한다. 입력 장치 캡처는 Windows 마이크 개인정보 설정 허용이 필요. DAW 플러그인은 앱 메뉴 "플러그인 설치"로 사용자 플러그인 폴더에 복사된다.
+- 라이선스: 앱 본체 의존성은 MIT/Apache/ISC(`THIRD_PARTY_NOTICES.md`). 동봉 VST3 플러그인은 nih-plug의 VST3 export가 GPLv3라 **회사 밖으로 재배포할 때는** 소스 공개 의무를 확인해야 한다(사내 팀 배포는 같은 조직 내 사용). CLAP 빌드는 ISC.
+- 설정·레이아웃은 PC마다 `%LOCALAPPDATA%\com.vatvivid.re-minimeter\` 아래 WebView2 저장소에 따로 쌓인다. 프리셋은 JSON으로 내보내 공유할 수 있다.
+
 ## 구조
 `AGENTS.md`(코드 구조·규칙), `DESIGN.md`(디자인 시스템) 참고.

@@ -369,6 +369,8 @@ struct XDrag {
     w: u32,
     h: u32,
     from: String,
+    /// Label of the window this payload is for (listeners in other windows ignore it).
+    to: String,
 }
 
 /// Label of the last window that received an `rm://xdrag-over`.
@@ -402,7 +404,7 @@ fn window_at(app: &tauri::AppHandle, px: i32, py: i32, exclude: &str) -> Option<
 fn xdrag_payload(target: &tauri::WebviewWindow, px: i32, py: i32, module: &str, w: u32, h: u32, from: &str) -> Option<XDrag> {
     let tp = target.inner_position().ok()?;
     let ts = target.scale_factor().ok()?;
-    Some(XDrag { module: module.to_string(), x: (px - tp.x) as f64 / ts, y: (py - tp.y) as f64 / ts, w, h, from: from.to_string() })
+    Some(XDrag { module: module.to_string(), x: (px - tp.x) as f64 / ts, y: (py - tp.y) as f64 / ts, w, h, from: from.to_string(), to: target.label().to_string() })
 }
 
 fn xdrag_leave_last(app: &tauri::AppHandle, st: &XDragState, keep: Option<&str>) {
@@ -411,7 +413,7 @@ fn xdrag_leave_last(app: &tauri::AppHandle, st: &XDragState, keep: Option<&str>)
     if let Some(l) = last.as_ref() {
         if keep != Some(l.as_str()) {
             if let Some(w) = app.webview_windows().get(l) {
-                let _ = w.emit("rm://xdrag-leave", ());
+                let _ = w.emit_to(w.label(), "rm://xdrag-leave", ());
             }
             *last = None;
         }
@@ -428,7 +430,7 @@ fn drag_hover(app: tauri::AppHandle, window: tauri::Window, st: State<XDragState
     xdrag_leave_last(&app, &st, target.as_ref().map(|t| t.label()));
     if let Some(t) = target {
         if let Some(p) = xdrag_payload(&t, px, py, &module, w, h, window.label()) {
-            let _ = t.emit("rm://xdrag-over", p);
+            let _ = t.emit_to(t.label(), "rm://xdrag-over", p);
             *st.0.lock() = Some(t.label().to_string());
         }
     }
@@ -451,7 +453,7 @@ fn drag_drop(app: tauri::AppHandle, window: tauri::Window, st: State<XDragState>
     xdrag_leave_last(&app, &st, None);
     let Some(t) = target else { return Ok(None) };
     let p = xdrag_payload(&t, px, py, &module, w, h, window.label()).ok_or("대상 창 위치를 읽지 못했습니다")?;
-    t.emit("rm://xdrag-drop", p).map_err(|e| e.to_string())?;
+    t.emit_to(t.label(), "rm://xdrag-drop", p).map_err(|e| e.to_string())?;
     Ok(Some(t.label().to_string()))
 }
 

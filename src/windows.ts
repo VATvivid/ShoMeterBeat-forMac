@@ -168,11 +168,17 @@ export function initWindowing(grid: Grid) {
   if (!IS_POP && prefs.pinned && settings.dock === "none") setAlwaysOnTop(true);
 
   // Tiles dragged in from another window (events from the Rust side, see lib.rs).
-  listen<{ module: string; x: number; y: number; w: number; h: number }>("rm://xdrag-over", (e) => {
+  // The Rust side targets the window under the pointer (emit_to); the `to` label is checked
+  // again here so a broadcast can never make another window (e.g. main) add the module too.
+  type XDragEv = { module: string; x: number; y: number; w: number; h: number; from: string; to?: string };
+  const mine = (p: XDragEv) => !p.to || p.to === WIN_LABEL;
+  listen<XDragEv>("rm://xdrag-over", (e) => {
+    if (!mine(e.payload)) return;
     grid.setExternalGhost({ w: e.payload.w, h: e.payload.h, clientX: e.payload.x, clientY: e.payload.y });
   }).catch(() => {});
   listen("rm://xdrag-leave", () => grid.setExternalGhost(null)).catch(() => {});
-  listen<{ module: string; x: number; y: number; w: number; h: number }>("rm://xdrag-drop", (e) => {
+  listen<XDragEv>("rm://xdrag-drop", (e) => {
+    if (!mine(e.payload)) return;
     grid.setExternalGhost(null);
     grid.add(e.payload.module, e.payload.w, e.payload.h, e.payload.x, e.payload.y);
   }).catch(() => {});
