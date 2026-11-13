@@ -8,7 +8,7 @@
 // A tile dragged out of the window is handed to `onXDrag` (cross-window move).
 // Right-click opens the module's settings menu.
 import type { Frame } from "../engine/frame";
-import { minSize, MODULES } from "../modules";
+import { baseOf, isInstance, minSize, MODULES, titleOf } from "../modules";
 import type { Module } from "../modules/types";
 import { effectiveDims, GRID_DIMS, gridExtra, layouts, saveLayout, saveSettings, setGridExtra, settings, type Layout, type LayoutKind } from "../state";
 import { showContextMenu, type MenuAction } from "./contextmenu";
@@ -183,7 +183,7 @@ export class Grid {
   /** Create/remove tiles so they match `layout[*].on`. */
   sync() {
     for (const [id, r] of Object.entries(this.layout)) {
-      if (r.on && !this.tiles.has(id) && MODULES[id]) this.mount(id);
+      if (r.on && !this.tiles.has(id) && MODULES[baseOf(id)]) this.mount(id);
       if (!r.on && this.tiles.has(id)) this.unmount(id);
     }
     this.relayout();
@@ -234,7 +234,7 @@ export class Grid {
       if (!g) { g = document.createElement("div"); g.className = "push-guide"; this.root.appendChild(g); this.guides[k] = g; }
       const p = this.rectPx(r);
       Object.assign(g.style, { display: "block", left: `${p.left}px`, top: `${p.top}px`, width: `${p.width}px`, height: `${p.height}px` });
-      g.textContent = this.tiles.get(id)?.module.title ?? id;
+      g.textContent = titleOf(id);
       k++;
     }
     for (; k < this.guides.length; k++) this.guides[k].style.display = "none";
@@ -258,7 +258,9 @@ export class Grid {
   }
 
   private mount(id: string) {
-    const module = MODULES[id]();
+    const module = MODULES[baseOf(id)]();
+    // Extra instances carry their layout key as id, so per-module settings (modSetting) are per instance.
+    if (isInstance(id)) (module as { id: string }).id = id;
     const el = document.createElement("div");
     el.className = "tile";
     el.dataset.id = id;
@@ -269,7 +271,7 @@ export class Grid {
     grip.textContent = "⋮⋮";
     const title = document.createElement("span");
     title.className = "tile-title";
-    title.textContent = module.title;
+    title.textContent = isInstance(id) ? `${module.title} (${id.split("#")[1]})` : module.title;
     const spacer = document.createElement("span");
     spacer.className = "spacer";
     head.append(grip, title, spacer);
@@ -312,7 +314,7 @@ export class Grid {
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
       { label: settings.placeMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 겹침 허용)" : "배치 방식: 겹침 허용 ✓ (→ 자리 바꾸기)", onClick: () => { settings.placeMode = settings.placeMode === "swap" ? "free" : "swap"; saveSettings(); } },
       ...extra,
-      { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
+      { label: isInstance(id) ? "이 모듈 지우기" : "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
   }
 
@@ -332,7 +334,8 @@ export class Grid {
   /** Switch a module off in this window. */
   remove(id: string) {
     if (!this.layout[id]) return;
-    this.layout[id].on = false;
+    if (isInstance(id)) delete this.layout[id]; // extra instances disappear entirely; base modules just switch off
+    else this.layout[id].on = false;
     saveLayout(this.kind);
     this.sync();
     this.onChange?.();
@@ -344,7 +347,7 @@ export class Grid {
    * tiles are pushed aside; in free mode (default) they are left alone (overlap allowed).
    */
   add(id: string, w: number, h: number, clientX?: number, clientY?: number) {
-    if (!MODULES[id]) return;
+    if (!MODULES[baseOf(id)]) return;
     const min = minSize(id, this.kind);
     const size = this.kind === "dockh" ? { w: Math.max(min.w, w), h: 1 } : this.kind === "dockv" ? { w: 1, h: Math.max(min.h, h) } : { w: Math.max(min.w, w), h: Math.max(min.h, h) };
     let target: Rect;

@@ -53,17 +53,34 @@ export const MODULE_TITLES: Record<string, string> = {
   pitch: "Pitch (노트 블록)",
   waveform: "Waveform (파형 · 구간 저장)",
   dynamics: "Dynamics (Crest · PSR · PLR)",
-  transient: "Transient (온셋 · BPM)",
+  transient: "BPM Checker (온셋 · 템포)",
   stereobands: "Stereo Bands (대역별 폭)",
   player: "Player (파일 재생 · 분석)",
   variation: "Variation Map (베리에이션 · 반복 감지)",
   subtitles: "Subtitles (자막 · whisper)",
   emoji: "Emoji (도트 · 재미용)",
-  punch: "Punch (타격감 · 화려함)",
+  punch: "Punch Machine (타격감 점수)",
 };
 
+/** A layout key is a module id, or `<module>#<n>` for an extra instance of the same module. */
+export function baseOf(key: string): string { return key.split("#")[0]; }
+export function isInstance(key: string): boolean { return key.includes("#"); }
+/** Title for a layout key: the module title, numbered for extra instances ("Pitch (2)"). */
+export function titleOf(key: string): string {
+  const base = baseOf(key);
+  const t = MODULE_TITLES[base] ?? base;
+  return isInstance(key) ? `${t.replace(/\s*\(.*$/, "")} (${key.split("#")[1]})` : t;
+}
+/** Next instance key for a module — the counter is shared by every window (localStorage). */
+export function newInstanceKey(base: string): string {
+  let n = 2;
+  try { n = Math.max(2, (Number(localStorage.getItem("rm.instance.seq")) || 1) + 1); localStorage.setItem("rm.instance.seq", String(n)); } catch { /* ignore */ }
+  return `${base}#${n}`;
+}
+
 /** Minimum tile size in grid cells per layout kind. */
-export function minSize(id: string, kind: LayoutKind): { w: number; h: number } {
+export function minSize(key: string, kind: LayoutKind): { w: number; h: number } {
+  const id = baseOf(key);
   if (kind === "dockh") return { w: id === "levels" ? 1 : 2, h: 1 };
   if (kind === "dockv") return { w: 1, h: 2 };
   if (id === "levels" || id === "dynamics" || id === "emoji") return { w: 2, h: 3 };

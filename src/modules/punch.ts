@@ -65,7 +65,7 @@ type View = "machine" | "analysis";
 
 export class PunchModule implements Module {
   readonly id = "punch";
-  readonly title = "Punch";
+  readonly title = "Punch Machine";
   private hits: PunchHit[] = [];
   private lastSeq = 0;
   private stats: PunchStats = { momentary: -120, tsr: 0, pm95: -120, mean: -120, frames: 0 };

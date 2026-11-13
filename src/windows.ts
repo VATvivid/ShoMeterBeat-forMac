@@ -9,7 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { inTauri } from "./engine/source";
 import type { Grid, Rect } from "./layout/grid";
-import { MODULE_TITLES } from "./modules";
+import { titleOf } from "./modules";
 import { IS_POP, onSettingsSynced, popLayoutKey, saveSettings, settings, WIN_LABEL, type Layout } from "./state";
 
 export interface PopWin { label: string; x: number; y: number; w: number; h: number; pinned: boolean; opacity: number }
@@ -42,7 +42,7 @@ export function popModules(label: string): { id: string; w: number; h: number }[
   } catch { return []; }
 }
 export function popTitle(label: string, index: number): string {
-  const mods = popModules(label).map((m) => (MODULE_TITLES[m.id] ?? m.id).replace(/\s*\(.*$/, ""));
+  const mods = popModules(label).map((m) => titleOf(m.id).replace(/\s*\((?!\d)[^)]*\)$/, ""));
   return `창 ${index + 1}${mods.length ? ` — ${mods.join(", ")}` : " (비어 있음)"}`;
 }
 

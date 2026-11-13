@@ -1,4 +1,4 @@
-import type { Frame } from "../engine/frame";
+import { freqToIndex, pointFreq, type Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
@@ -6,6 +6,13 @@ import { modSetting, setModSetting } from "../state";
 // Melodyne-style note blocks: time runs left→right (newest at the right edge),
 // pitch on a semitone grid with piano keys. Consecutive frames on the same
 // semitone merge into one block; the exact pitch is drawn as a curve through it.
+//
+// Two modes (right-click → 모드):
+//   음성   — the engine's voice tracker (autocorrelation f0 gated by voicing), 60–1000 Hz.
+//   효과음 — the strongest spectral peak of the live spectrum (parabolic interpolation on
+//            the log-spaced points) gated by tonality: the peak must stand ≥ 12 dB over the
+//            spectrum's median and the spectral flatness must be low. Follows sweeps, hits
+//            with a tonal body, UI blips and drones that the voice tracker rejects.
 
 const RATE = 50;            // history samples per second
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
@@ -38,22 +45,48 @@ export class PitchModule implements Module {
   private get octaves() { return modSetting(this.id, "octaves", 2); }
   private get showCurve() { return modSetting(this.id, "curve", true); }
   private get minConf() { return modSetting(this.id, "minConf", 0.35); }
+  private get mode() { return modSetting(this.id, "mode", "voice") as "voice" | "sfx"; }
+  private get sfxFlat() { return modSetting(this.id, "sfxFlat", 0.35); }
+
+  /** Pitch estimate for the current frame according to the mode: Hz (0 = none) and 0…1 confidence. */
+  private estimate(f: Frame): { hz: number; conf: number } {
+    if (this.mode === "voice") return f.voiced >= this.minConf && f.f0 > 0 ? { hz: f.f0, conf: f.voiced } : { hz: 0, conf: 0 };
+    // 효과음: strongest spectral peak 30 Hz … 10 kHz with parabolic refinement
+    const spec = f.specL;
+    const i0 = Math.max(1, Math.ceil(freqToIndex(30))), i1 = Math.min(spec.length - 2, Math.floor(freqToIndex(10000)));
+    let bi = -1, bv = -Infinity;
+    for (let i = i0; i <= i1; i++) if (spec[i] > bv && spec[i] >= spec[i - 1] && spec[i] >= spec[i + 1]) { bv = spec[i]; bi = i; }
+    if (bi < 0 || bv < -70) return { hz: 0, conf: 0 };
+    const vals = Array.from(spec.subarray(i0, i1 + 1)).sort((a, b) => a - b);
+    const med = vals[vals.length >> 1];
+    const prominence = bv - med;
+    if (prominence < 12 || f.flatness > this.sfxFlat) return { hz: 0, conf: 0 };
+    const y0 = spec[bi - 1], y1 = spec[bi], y2 = spec[bi + 1];
+    const den = y0 - 2 * y1 + y2;
+    const delta = Math.abs(den) > 1e-6 ? Math.max(-0.5, Math.min(0.5, 0.5 * (y0 - y2) / den)) : 0;
+    const hz = pointFreq(bi + delta);
+    return { hz, conf: Math.max(0, Math.min(1, (prominence - 12) / 18)) * (1 - f.flatness / this.sfxFlat * 0.5) };
+  }
 
   settings(): SettingItem[] {
     return [
+      { type: "select", label: "모드", value: this.mode, options: [{ value: "voice", label: "음성 전용 (유성음 f0)" }, { value: "sfx", label: "효과음 전용 (스펙트럼 피크 · 톤 문턱)" }], onChange: (v) => { setModSetting(this.id, "mode", v); this.hist.fill(NaN); this.note.fill(NaN); this.conf.fill(0); this.len = 0; } },
       { type: "select", label: "시간 범위", value: String(this.seconds), options: [5, 10, 20, 30].map((v) => ({ value: String(v), label: `${v}초` })), onChange: (v) => setModSetting(this.id, "seconds", Number(v)) },
       { type: "select", label: "음역 폭", value: String(this.octaves), options: [1, 2, 3].map((v) => ({ value: String(v), label: `${v}옥타브` })), onChange: (v) => setModSetting(this.id, "octaves", Number(v)) },
-      { type: "range", label: "감도 (유성음 문턱)", value: this.minConf, min: 0.1, max: 0.8, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "minConf", v) },
+      { type: "range", label: "감도 (유성음 문턱 · 음성 모드)", value: this.minConf, min: 0.1, max: 0.8, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "minConf", v) },
+      { type: "range", label: "톤 문턱 (평탄도 · 효과음 모드)", value: this.sfxFlat, min: 0.1, max: 0.7, step: 0.05, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "sfxFlat", v) },
       { type: "toggle", label: "피치 곡선", value: this.showCurve, onChange: (v) => setModSetting(this.id, "curve", v) },
       { type: "action", label: "기록 지우기", onClick: () => { this.hist.fill(NaN); this.note.fill(NaN); this.conf.fill(0); this.len = 0; } },
     ];
   }
 
   headReadout(f: Frame) {
-    if (!(f.voiced >= this.minConf) || !(f.f0 > 0)) return "—";
-    const m = hzToMidi(f.f0);
+    const e = this.estimate(f);
+    const tag = this.mode === "sfx" ? "SFX · " : "";
+    if (!(e.hz > 0)) return `${tag}—`;
+    const m = hzToMidi(e.hz);
     const cents = Math.round((m - Math.round(m)) * 100);
-    return `${noteName(m)}  ${cents >= 0 ? "+" : ""}${cents}¢  ${f.f0.toFixed(1)} Hz`;
+    return `${tag}${noteName(m)}  ${cents >= 0 ? "+" : ""}${cents}¢  ${e.hz.toFixed(1)} Hz`;
   }
 
   private push(midi: number, conf: number) {
@@ -71,11 +104,12 @@ export class PitchModule implements Module {
     const { ctx, w, h, dt } = d;
     // ---- sample at RATE
     this.acc += dt;
-    const live = f.voiced >= this.minConf && f.f0 > 0;
-    const midi = live ? hzToMidi(f.f0) : NaN;
+    const est = this.estimate(f);
+    const live = est.hz > 0;
+    const midi = live ? hzToMidi(est.hz) : NaN;
     while (this.acc >= 1 / RATE) {
       this.acc -= 1 / RATE;
-      this.push(midi, live ? f.voiced : 0);
+      this.push(midi, live ? est.conf : 0);
     }
     if (live) {
       this.lastMidi = midi;
@@ -173,7 +207,7 @@ export class PitchModule implements Module {
       ctx.font = font(10);
       ctx.textAlign = "right";
       ctx.textBaseline = "top";
-      ctx.fillText("unvoiced", x1 - 2, y0 + 2);
+      ctx.fillText(this.mode === "sfx" ? "no tone" : "unvoiced", x1 - 2, y0 + 2);
     }
   }
 }

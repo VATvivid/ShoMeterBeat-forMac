@@ -21,7 +21,7 @@ const LAG_MIN = Math.round(RATE * 60 / 200), LAG_MAX = Math.round(RATE * 60 / 60
 
 export class TransientModule implements Module {
   readonly id = "transient";
-  readonly title = "Transient";
+  readonly title = "BPM Checker";
   private lastPoll = 0;
   private polling = false;
   private bpm = 0;

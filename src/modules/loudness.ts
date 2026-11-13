@@ -2,6 +2,7 @@ import type { Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import { ballistic, fmtDb, type DrawCtx, type Module, type SettingItem } from "./types";
 import { settings, saveSettings, modSetting, setModSetting } from "../state";
+import { getSource } from "../engine/instance";
 
 // Loudness (EBU R128) — one wide tile with four parts, left to right:
 //   readouts  — Integrated hero, Range, Momentary, Short-term, True-peak max, target
@@ -49,12 +50,30 @@ export class LoudnessModule implements Module {
       },
       { type: "toggle", label: "LUFS 미터 (M/S 막대)", value: this.showMeters, onChange: (v) => setModSetting(this.id, "meters", v) },
       { type: "toggle", label: "분포 (최근 60초)", value: this.showProfile, onChange: (v) => setModSetting(this.id, "profile", v) },
+      { type: "action", label: "LUFS 초기화 (Integrated · LRA · max) (R)", onClick: () => this.reset() },
       { type: "action", label: "흔적·분포 지우기", onClick: () => { this.histM.fill(-120); this.histS.fill(-120); this.hold = [-120, -120]; } },
     ];
   }
 
   headReadout(f: Frame) {
     return `I ${fmtDb(f.lufsI)}  S ${fmtDb(f.lufsS)}  M ${fmtDb(f.lufsM)}`;
+  }
+
+  /** Restarts the integrated measurement (also clears LRA and the max readouts). */
+  reset() {
+    getSource()?.resetLoudness().catch(() => {});
+    this.hold = [-120, -120];
+  }
+
+  mount(body: HTMLElement) {
+    // Small reset button in the tile's top-right corner (the toolbar button moved here).
+    const b = document.createElement("button");
+    b.className = "btn tile-overlay-btn";
+    b.textContent = "초기화";
+    b.title = "통합 라우드니스 초기화 (R)";
+    b.addEventListener("pointerdown", (e) => e.stopPropagation());
+    b.addEventListener("click", (e) => { e.stopPropagation(); this.reset(); });
+    body.appendChild(b);
   }
 
   draw(d: DrawCtx, f: Frame) {

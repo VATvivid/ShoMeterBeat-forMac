@@ -214,7 +214,6 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     const name = names[Number(e.key) - 1];
     if (name) { e.preventDefault(); applyPreset(name, all[name]); }
   });
-  $("reset-loudness-btn").addEventListener("click", () => source.resetLoudness());
 
   // ---- recording ---------------------------------------------------------------
   const recBtn = $<HTMLButtonElement>("rec-btn");
