@@ -9,14 +9,20 @@ import { modSetting, setModSetting } from "../state";
 // The engine (src-tauri/src/audio/punch.rs) implements the Fenton & Lee perceptual punch
 // model: transient separation → modified loudness weighting → octave-band regression
 // weights → 280 ms block → dB re full-scale sine. Every onset becomes a *hit* with its
-// punch (dB), attack time, octave profile and a "flash" index (this app's own showiness
-// heuristic: high-band share, octave coverage, stereo width, tail). Session PM95 / mean
-// come from the live momentary punch. Click a hit bar to make it the reference; later
-// hits show their difference to it.
+// punch (dB), weight/body (dB — the whole 500 ms hit, transient + body + tail), attack
+// time, octave profile and a "flash" index (this app's own showiness heuristic).
+//
+// 강도 (strength) is what the big number, the history bars and the glove follow. It is
+// a blend of punch and body (default 35 % punch + 65 % body, in dB) mapped to a 0–100
+// index that is dense at the top (γ = 2 over −45 … −10 dB), because game hits are
+// mastered to the same peak and differ by only a few dB — those few dB must spread.
+// Calibrated on a set of 36 game hit sounds (normal / double / critical tiers): punch
+// alone was flat across tiers (±2 dB) while body stepped 2–3 dB per tier.
 
 const PAD = 8;
-const DB_TOP = 6, DB_BOT = -54;        // punch scale (dB)
-const BAND_TOP = 0, BAND_BOT = -60;    // octave profile scale
+const IDX_LO = -45, IDX_HI = -10, IDX_GAMMA = 2;   // 강도 dB → 0…100
+const DB_TOP = -8, DB_BOT = -42;                    // history bar scale in dB mode
+const BAND_TOP = 0, BAND_BOT = -60;
 const OCT_LABELS = ["63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
 const POLL_MS = 150;
 const HOLD_S = 2.5;
@@ -24,8 +30,8 @@ const HOLD_S = 2.5;
 interface Rect { x: number; y: number; w: number; h: number }
 
 // Boxing-glove emoji (16×16, letters are theme tokens like the Emoji module): the glove
-// grows with the last hit's punch and the glow / rays around it grow with its flash index.
-const GLOVE_PAL: Record<string, string> = { k: "bg-3", r: "clip", w: "fg-0", d: "map-1" };
+// grows with the last hit's 강도 and the glow / rays around it grow with its flash index.
+const GLOVE_PAL: Record<string, string> = { k: "bg-3", r: "clip", w: "fg-0" };
 const GLOVE: string[] = [
   "................",
   "......kkkkk.....",
@@ -45,6 +51,8 @@ const GLOVE: string[] = [
   "................",
 ];
 
+type Basis = "blend" | "punch" | "body";
+
 export class PunchModule implements Module {
   readonly id = "punch";
   readonly title = "Punch";
@@ -56,26 +64,28 @@ export class PunchModule implements Module {
   private live = -120;
   private liveHold = -120;
   private holdAge = 0;
-  private flashAnim = 0;          // 1 right after a new hit → fades
+  private flashAnim = 0;
   private histRect: Rect = { x: 0, y: 0, w: 0, h: 0 };
   private histBarW = 0;
   private histShown: PunchHit[] = [];
   private hover = -1;
   private clock = 0;
-  private gloveScale = 0;       // eased 0…1 (punch index of the last hit)
-  private gloveGlow = 0;        // eased 0…1 (flash of the last hit)
-  private jab = 0;              // 1 right after a hit → 0 (the glove lunges)
+  private gloveScale = 0;
+  private gloveGlow = 0;
+  private jab = 0;
 
-  private get histN() { return modSetting(this.id, "hist", 40); }
-  private get scale() { return modSetting(this.id, "scale", "db") as "db" | "index"; }
+  private get histN() { return modSetting(this.id, "hist", 30); }
+  private get scale() { return modSetting(this.id, "scale", "index") as "db" | "index"; }
+  private get basis() { return modSetting(this.id, "basis", "blend") as Basis; }
   private get showFlash() { return modSetting(this.id, "flash", true); }
   private get showGlove() { return modSetting(this.id, "glove", true); }
   private get ref(): PunchHit | null { return modSetting<PunchHit | null>(this.id, "ref", null); }
 
   settings(): SettingItem[] {
     return [
-      { type: "select", label: "강도 척도", value: this.scale, options: [{ value: "db", label: "dB (풀스케일 기준)" }, { value: "index", label: "0–100 지수 (−50 dB → 0, +6 dB → 100)" }], onChange: (v) => setModSetting(this.id, "scale", v) },
-      { type: "select", label: "히트 이력", value: String(this.histN), options: [20, 40, 80].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "hist", Number(v)) },
+      { type: "select", label: "강도 기준", value: this.basis, options: [{ value: "blend", label: "합성 (타격 35 % + 무게 65 %)" }, { value: "punch", label: "타격(punch)만" }, { value: "body", label: "무게(body)만" }], onChange: (v) => setModSetting(this.id, "basis", v) },
+      { type: "select", label: "강도 척도", value: this.scale, options: [{ value: "index", label: "0–100 지수 (−45 dB → 0, −10 dB → 100, 고점 조밀)" }, { value: "db", label: "dB (풀스케일 정현파 기준)" }], onChange: (v) => setModSetting(this.id, "scale", v) },
+      { type: "select", label: "히트 이력", value: String(this.histN), options: [15, 30, 60].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "hist", Number(v)) },
       { type: "toggle", label: "화려함 지수 표시", value: this.showFlash, onChange: (v) => setModSetting(this.id, "flash", v) },
       { type: "toggle", label: "글러브 이모지", value: this.showGlove, onChange: (v) => setModSetting(this.id, "glove", v) },
       { type: "action", label: "마지막 히트를 기준으로", onClick: () => { const h = this.hits[this.hits.length - 1]; if (h) setModSetting(this.id, "ref", h); } },
@@ -84,10 +94,26 @@ export class PunchModule implements Module {
     ];
   }
 
+  /** 강도 in dB for a hit according to the basis setting. */
+  private strengthDb(h: PunchHit) {
+    const body = h.body_db ?? h.punch_db;
+    return this.basis === "punch" ? h.punch_db : this.basis === "body" ? body : 0.35 * h.punch_db + 0.65 * body;
+  }
+  private index(db: number) { return 100 * Math.pow(Math.max(0, Math.min(1, (db - IDX_LO) / (IDX_HI - IDX_LO))), IDX_GAMMA); }
+  private fmtDb(db: number) { return `${db.toFixed(1).replace("-", "−")} dB`; }
+  private fmt(db: number) { return this.scale === "index" ? `${this.index(db).toFixed(0)}` : this.fmtDb(db); }
+  private delta(db: number) {
+    const r = this.ref; if (!r) return "";
+    const rd = this.strengthDb(r);
+    const d = this.scale === "index" ? this.index(db) - this.index(rd) : db - rd;
+    return `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(this.scale === "index" ? 0 : 1)}${this.scale === "index" ? "" : " dB"}`;
+  }
+
   headReadout() {
     const h = this.hits[this.hits.length - 1];
     if (!h) return "히트 대기";
-    return `${this.fmt(h.punch_db)}${this.showFlash ? ` · 화려함 ${Math.round(h.flash)}` : ""}${this.ref ? ` · 기준 ${this.delta(h.punch_db)}` : ""}`;
+    const s = this.strengthDb(h);
+    return `강도 ${this.fmt(s)}${this.showFlash ? ` · 화려함 ${Math.round(h.flash)}` : ""}${this.ref ? ` · 기준 ${this.delta(s)}` : ""}`;
   }
 
   mount(body: HTMLElement, isEditing: () => boolean) {
@@ -115,14 +141,6 @@ export class PunchModule implements Module {
     return i >= 0 && i < this.histShown.length ? i : -1;
   }
 
-  private index(db: number) { return Math.max(0, Math.min(100, ((db + 50) / 56) * 100)); }
-  private fmt(db: number) { return this.scale === "index" ? `${this.index(db).toFixed(0)}` : `${db.toFixed(1).replace("-", "−")} dB`; }
-  private delta(db: number) {
-    const r = this.ref; if (!r) return "";
-    const d = this.scale === "index" ? this.index(db) - this.index(r.punch_db) : db - r.punch_db;
-    return `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(1)}${this.scale === "index" ? "" : " dB"}`;
-  }
-
   private poll() {
     const src = getSource();
     if (!src || this.polling) return;
@@ -146,7 +164,6 @@ export class PunchModule implements Module {
   draw(d: DrawCtx, f: Frame) {
     const { ctx, w, h, dt } = d;
     this.poll();
-    // live momentary meter from the frame (60 fps) with a hold line
     const target = f.punchM;
     this.live = ballistic(this.live, target, dt, 40);
     if (target >= this.liveHold) { this.liveHold = target; this.holdAge = 0; }
@@ -154,19 +171,16 @@ export class PunchModule implements Module {
     this.flashAnim = Math.max(0, this.flashAnim - dt * 2);
     this.clock += dt;
     this.jab = Math.max(0, this.jab - dt * 3);
+    const last = this.hits[this.hits.length - 1] ?? null;
     {
-      const lh = this.hits[this.hits.length - 1];
-      const ts = lh ? this.index(lh.punch_db) / 100 : 0, tg = lh ? lh.flash / 100 : 0;
+      const ts = last ? this.index(this.strengthDb(last)) / 100 : 0, tg = last ? last.flash / 100 : 0;
       const k = Math.min(1, dt * 8);
       this.gloveScale += (ts - this.gloveScale) * k;
       this.gloveGlow += (tg - this.gloveGlow) * k;
     }
 
-    const last = this.hits[this.hits.length - 1] ?? null;
     const ref = this.ref;
-    const narrow = w < 220, short = h < 120, tiny = w < 120 || h < 70;
-    const gloveSide = this.showGlove && !tiny ? Math.max(26, Math.min(64, h * 0.32)) : 0;
-    const textMaxX = w - PAD - gloveSide * 1.3;
+    const narrow = w < 240, short = h < 120, tiny = w < 120 || h < 70;
     const yOfDb = (v: number, y0: number, hh: number) => y0 + ((DB_TOP - Math.min(DB_TOP, Math.max(DB_BOT, v))) / (DB_TOP - DB_BOT)) * hh;
 
     // ---- readout row
@@ -174,20 +188,17 @@ export class PunchModule implements Module {
     if (!tiny) {
       ctx.textBaseline = "top"; ctx.textAlign = "left";
       ctx.fillStyle = theme("fg-1"); ctx.font = font(10, 600);
-      ctx.fillText("PUNCH", PAD, y);
+      ctx.fillText("강도", PAD, y + 2);
       ctx.fillStyle = last ? theme("fg-0") : theme("fg-2"); ctx.font = font(short ? 18 : 24, 600);
-      const big = last ? this.fmt(last.punch_db) : "—";
-      ctx.fillText(big, PAD + 50, y - 4);
-      let x = PAD + 50 + ctx.measureText(big).width + 14;
-      ctx.font = font(10);
+      const big = last ? this.fmt(this.strengthDb(last)) : "—";
+      ctx.fillText(big, PAD + 32, y - 4);
+      let x = PAD + 32 + ctx.measureText(big).width + 14;
       if (last && !narrow) {
-        const parts: [string, string][] = [];
+        const parts: [string, string][] = [["타격", this.fmtDb(last.punch_db)], ["무게", this.fmtDb(last.body_db ?? last.punch_db)], ["어택", `${last.attack_ms.toFixed(0)} ms`]];
         if (this.showFlash) parts.push(["화려함", `${Math.round(last.flash)}`]);
-        parts.push(["어택", `${last.attack_ms.toFixed(0)} ms`]);
-        parts.push(["피크", `${last.peak_db.toFixed(1).replace("-", "−")} dBFS`]);
-        if (ref) parts.push(["기준 대비", this.delta(last.punch_db)]);
+        if (ref) parts.push(["기준 대비", this.delta(this.strengthDb(last))]);
         for (const [k, v] of parts) {
-          if (x + 60 > textMaxX) break;
+          if (x + 70 > w - PAD) break;
           ctx.fillStyle = theme("fg-1"); ctx.font = font(10); ctx.fillText(k, x, y + 2);
           x += ctx.measureText(k).width + 4;
           ctx.fillStyle = k === "기준 대비" ? theme("peak") : theme("fg-0"); ctx.font = font(13, 500); ctx.fillText(v, x, y);
@@ -196,7 +207,6 @@ export class PunchModule implements Module {
       }
       y += short ? 24 : 32;
     }
-    if (gloveSide) this.drawGlove(ctx, w - PAD - gloveSide / 2, PAD + gloveSide / 2, gloveSide, !!last);
 
     // ---- caption (session stats) at the bottom
     const capH = tiny ? 0 : 14;
@@ -205,16 +215,17 @@ export class PunchModule implements Module {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "bottom";
       const s = this.stats;
       const txt = s.frames > 0
-        ? `PM95 ${this.fmt(s.pm95)}  ·  평균 ${this.fmt(s.mean)}  ·  PM95M ${(s.pm95 - s.mean).toFixed(1)} dB  ·  TSR ${f.tsr.toFixed(0)} dB`
+        ? `punch PM95 ${this.fmtDb(s.pm95)}  ·  평균 ${this.fmtDb(s.mean)}  ·  PM95M ${(s.pm95 - s.mean).toFixed(1)} dB  ·  TSR ${f.tsr.toFixed(0)} dB`
         : inTauri ? "소리를 기다리는 중 — 히트 막대를 클릭하면 기준이 됩니다" : "브라우저 미리보기";
       ctx.fillText(narrow ? txt.split("  ·  ").slice(0, 2).join(" · ") : txt, PAD, h - 2);
     }
     const ph = y1 - y;
     if (ph < 16) return;
 
-    // ---- columns: [live bar] [octave profile] [hit history]
+    // ---- columns: [live bar] [octave profile] [hit history] [glove]
     const liveW = narrow ? 0 : 14;
-    const profW = narrow ? 0 : Math.min(180, Math.max(90, (w - 2 * PAD - liveW) * 0.33));
+    const gloveW = this.showGlove && !tiny ? Math.max(40, Math.min(110, Math.min(ph, w * 0.22))) : 0;
+    const profW = narrow ? 0 : Math.min(170, Math.max(80, (w - 2 * PAD - liveW - gloveW) * 0.34));
     const gap = 10;
     let x = PAD;
     if (liveW) {
@@ -231,36 +242,35 @@ export class PunchModule implements Module {
       this.drawProfile(ctx, { x, y, w: profW, h: ph }, last, ref);
       x += profW + gap;
     }
-    const histW = w - PAD - x;
+    const histW = w - PAD - x - (gloveW ? gloveW + gap : 0);
     if (histW > 20) this.drawHistory(ctx, { x, y, w: histW, h: ph }, ref);
     this.histRect = { x, y, w: Math.max(0, histW), h: ph };
+    if (gloveW) this.drawGlove(ctx, w - PAD - gloveW / 2, y + ph / 2, Math.min(gloveW, ph), !!last);
     if (!inTauri && this.hits.length === 0 && !tiny) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText("브라우저 미리보기", x + histW / 2, y + ph / 2);
     }
   }
 
-  /** Glove centred at (cx, cy); `side` is the area for a weak hit, a strong one grows to ~1.6×. */
+  /** Glove centred at (cx, cy); `side` is the column — a weak hit uses ~55 % of it, a strong one ~100 %. */
   private drawGlove(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: number, hasHit: boolean) {
     const s = this.gloveScale, g = this.gloveGlow;
-    const scale = (0.65 + 0.95 * s) * (1 + 0.22 * Math.sin(this.jab * Math.PI));
+    const scale = (0.5 + 0.5 * s) * (1 + 0.2 * Math.sin(this.jab * Math.PI));
     const size = side * scale;
-    const x0 = cx - size / 2 + 4 * Math.sin(this.jab * Math.PI); // lunges to the right on a hit
+    const x0 = cx - size / 2 + 4 * Math.sin(this.jab * Math.PI);
     const y0 = cy - size / 2;
     ctx.save();
     ctx.globalAlpha = hasHit ? 1 : 0.35;
-    // glow: warm radial light whose radius and brightness follow the flash index
     if (g > 0.03) {
-      const rad = size * (0.55 + 0.9 * g);
+      const rad = size * (0.55 + 0.6 * g);
       const grad = ctx.createRadialGradient(cx, cy, size * 0.2, cx, cy, rad);
       grad.addColorStop(0, withAlpha(theme("target"), 0.15 + 0.55 * g));
       grad.addColorStop(0.6, withAlpha(theme("peak"), 0.12 * g));
       grad.addColorStop(1, withAlpha(theme("target"), 0));
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
-      // rays appear once the hit is fairly showy and spin slowly
       if (g > 0.35) {
-        const n = 8, len = size * (0.5 + 0.9 * g), a0 = this.clock * 0.6;
+        const n = 8, len = size * (0.3 + 0.5 * g), a0 = this.clock * 0.6;
         ctx.strokeStyle = withAlpha(theme("target"), (g - 0.35) * 0.9);
         ctx.lineWidth = Math.max(1, size / 32);
         for (let i = 0; i < n; i++) {
@@ -298,7 +308,6 @@ export class PunchModule implements Module {
       const bx = r.x + b * bw + 1;
       if (last) {
         const yv = yOf(last.bands[b]);
-        // bands the regression favours (63 Hz … 1 kHz) in the signal colour, the neutral ones dimmer
         ctx.fillStyle = withAlpha(theme("sig"), b < 5 ? 0.9 : 0.5);
         ctx.fillRect(bx, yv, bw - 2, r.y + ph - yv);
       }
@@ -320,18 +329,19 @@ export class PunchModule implements Module {
     this.histShown = shown;
     const labelH = r.h > 60 ? 12 : 0;
     const ph = r.h - labelH;
-    const yOf = (v: number) => r.y + ((DB_TOP - Math.min(DB_TOP, Math.max(DB_BOT, v))) / (DB_TOP - DB_BOT)) * ph;
-    // scale lines + labels
+    const idxMode = this.scale === "index";
+    // bar height: index (0…100) or dB on the fixed scale
+    const yOf = (db: number) => idxMode ? r.y + ph - (this.index(db) / 100) * ph : r.y + ((DB_TOP - Math.min(DB_TOP, Math.max(DB_BOT, db))) / (DB_TOP - DB_BOT)) * ph;
     ctx.strokeStyle = theme("grid"); ctx.lineWidth = 1;
     ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (let v = -48; v <= DB_TOP; v += 12) {
-      const yy = Math.round(yOf(v)) + 0.5;
+    const ticks = idxMode ? [25, 50, 75, 100].map((i) => ({ y: r.y + ph - (i / 100) * ph, t: `${i}` })) : [-36, -24, -12].map((v) => ({ y: yOf(v), t: `${v}` }));
+    for (const tk of ticks) {
+      const yy = Math.round(tk.y) + 0.5;
       ctx.beginPath(); ctx.moveTo(r.x, yy); ctx.lineTo(r.x + r.w, yy); ctx.stroke();
-      if (r.w > 60) ctx.fillText(this.scale === "index" ? `${this.index(v).toFixed(0)}` : `${v}`, r.x + r.w - 2, yy - 5);
+      if (r.w > 50) ctx.fillText(tk.t, r.x + r.w - 2, yy - 5);
     }
-    // reference level line
     if (ref) {
-      const yr = Math.round(yOf(ref.punch_db)) + 0.5;
+      const yr = Math.round(yOf(this.strengthDb(ref))) + 0.5;
       ctx.strokeStyle = theme("peak"); ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(r.x, yr); ctx.lineTo(r.x + r.w, yr); ctx.stroke(); ctx.setLineDash([]);
     }
@@ -344,7 +354,8 @@ export class PunchModule implements Module {
       const bx = r.x + i * bw;
       const isRef = !!ref && ref.seq === hit.seq && ref.t === hit.t;
       const isLast = i === shown.length - 1;
-      const yv = yOf(hit.punch_db);
+      const sdb = this.strengthDb(hit);
+      const yv = yOf(sdb);
       const a = isLast ? 0.95 : 0.55 + (isRef ? 0.4 : 0);
       ctx.fillStyle = withAlpha(isRef ? theme("peak") : theme("sig"), a);
       ctx.fillRect(bx + 1, yv, Math.max(1, bw - 2), r.y + ph - yv);
@@ -353,14 +364,13 @@ export class PunchModule implements Module {
         ctx.fillRect(bx + 1, yv, Math.max(1, bw - 2), r.y + ph - yv);
       }
       if (this.showFlash && bw >= 4) {
-        // flash index as a marker on the bar column (0 at the bottom, 100 at the top)
         const yf = r.y + ph - (hit.flash / 100) * ph;
         ctx.fillStyle = theme("sig-2");
         ctx.fillRect(bx + 1, Math.round(yf) - 1, Math.max(1, bw - 2), 2);
       }
       if (i === this.hover && labelH) {
         ctx.fillStyle = theme("fg-0"); ctx.font = font(9);
-        ctx.fillText(`${this.fmt(hit.punch_db)} · ${hit.attack_ms.toFixed(0)}ms · 화려함 ${Math.round(hit.flash)}`, Math.min(Math.max(bx, r.x + 60), r.x + r.w - 60), r.y + 2);
+        ctx.fillText(`강도 ${this.fmt(sdb)} · 타격 ${this.fmtDb(hit.punch_db)} · 무게 ${this.fmtDb(hit.body_db ?? hit.punch_db)} · 화려함 ${Math.round(hit.flash)}`, Math.min(Math.max(bx, r.x + 90), r.x + r.w - 90), r.y + 2);
       }
     }
     if (labelH) {

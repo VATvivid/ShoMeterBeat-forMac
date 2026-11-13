@@ -46,6 +46,10 @@ const MIN_GAP_MS: f32 = 60.0;
 const ONSET_RISE_DB: f32 = 8.0;
 const FLOOR_DB: f32 = -75.0;
 const FLOOR_RISE_DB_PER_S: f32 = 40.0;
+/// Decaying-maximum envelope of the transient energy: a new onset must also rise 8 dB above
+/// it, so a noisy tail cannot re-trigger right after a hit (50 dB/s → a hit's own level is
+/// forgotten after ~1 s; a second hit of equal strength 0.5 s later still fires).
+const ENV_RELEASE_DB_PER_S: f32 = 50.0;
 const HIST_LO: f32 = -90.0;
 const HIST_STEP: f32 = 0.5;
 const HIST_N: usize = 200; // −90 … +10 dB
@@ -70,6 +74,9 @@ pub struct Hit {
     pub tail: f32,
     /// Sample peak over the hit window, dBFS.
     pub peak_db: f32,
+    /// "Weight": loudness-weighted energy of the whole hit (transient + body + tail) over the
+    /// 500 ms window, dB re full-scale sine — what the 280 ms transient block does not see.
+    pub body_db: f32,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -133,6 +140,7 @@ pub struct PunchMeter {
     block_n: usize,
     hit_n: usize,
     floor_db: f32,
+    env_db: f32,
     prev_t_db: f32,
     pending: Option<Pending>,
     last_onset: i64,
@@ -272,6 +280,7 @@ impl PunchMeter {
             block_n: (BLOCK_MS / hop_ms).round().max(1.0) as usize,
             hit_n: (HIT_MS / hop_ms).round().max(2.0) as usize,
             floor_db: FLOOR_DB,
+            env_db: SILENCE,
             prev_t_db: SILENCE,
             pending: None,
             last_onset: -1_000_000,
@@ -445,7 +454,9 @@ impl PunchMeter {
         let t_db = db(rec.trans);
         self.floor_db = (self.floor_db + FLOOR_RISE_DB_PER_S * hop_ms / 1000.0).min(t_db).max(FLOOR_DB - 10.0);
         let gap_ok = idx as i64 - self.last_onset >= (MIN_GAP_MS / hop_ms) as i64;
-        if self.pending.is_none() && t_db > FLOOR_DB && t_db > self.prev_t_db && t_db >= self.floor_db + ONSET_RISE_DB && gap_ok {
+        let env_prev = self.env_db;
+        self.env_db = (self.env_db - ENV_RELEASE_DB_PER_S * hop_ms / 1000.0).max(t_db).max(SILENCE);
+        if self.pending.is_none() && t_db > FLOOR_DB && t_db > self.prev_t_db && t_db >= self.floor_db + ONSET_RISE_DB && t_db >= env_prev + ONSET_RISE_DB && gap_ok {
             self.pending = Some(Pending { onset: idx, peak_idx: idx, peak_val: rec.trans });
             self.last_onset = idx as i64;
             // The floor jumps to the onset level so the same hit cannot re-trigger as it decays.
@@ -507,6 +518,15 @@ impl PunchMeter {
         let spread = band_db.iter().filter(|&&d| d >= max_b - 15.0).count() as f32 / N_OCT as f32;
         let width = if mid + side > 1e-12 { (2.0 * side / (mid + side)).clamp(0.0, 1.0) } else { 0.0 };
         // tail: how long the whole (not just transient) energy stays within 20 dB of its peak
+        let mut body_sum = 0.0f32;
+        let mut body_n = 0usize;
+        for i in 0..self.hit_n as u64 {
+            if let Some(r) = self.rec_at(p.onset + i) {
+                body_sum += r.total;
+                body_n += 1;
+            }
+        }
+        let body_db = db(body_sum / body_n.max(1) as f32);
         let mut peak_total = 0.0f32;
         let mut peak_at = p.onset;
         for i in 0..self.hit_n as u64 {
@@ -540,6 +560,7 @@ impl PunchMeter {
             width,
             tail,
             peak_db: if peak > 1e-6 { 20.0 * peak.log10() } else { SILENCE },
+            body_db,
         });
         while self.hits.len() > 200 {
             self.hits.pop_front();

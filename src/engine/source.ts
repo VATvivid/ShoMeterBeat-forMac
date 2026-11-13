@@ -53,7 +53,7 @@ export interface Source {
   punchReset(): Promise<void>;
 }
 
-export interface PunchHit { seq: number; t: number; punch_db: number; attack_ms: number; bands: number[]; flash: number; sparkle: number; spread: number; width: number; tail: number; peak_db: number }
+export interface PunchHit { seq: number; t: number; punch_db: number; attack_ms: number; bands: number[]; flash: number; sparkle: number; spread: number; width: number; tail: number; peak_db: number; body_db: number }
 export interface PunchStats { momentary: number; tsr: number; pm95: number; mean: number; frames: number }
 
 export interface Subtitle { seq: number; t0: number; t1: number; text: string; lang: string; ms: number }
@@ -320,7 +320,7 @@ class MockSource implements Source {
       const j = (s: number) => (Math.random() - 0.5) * s;
       const bands = new Array(9).fill(0).map((_, b) => base[0] - 6 - Math.abs(b - (k === 0 ? 1 : k === 1 ? 4 : 6)) * 5 + j(2));
       this.punchSeq++;
-      out.push({ seq: this.punchSeq, t: this.punchLast, punch_db: base[0] + j(1.5), attack_ms: base[1] + j(2), bands, flash: base[2] + j(6), sparkle: 0.2 + k * 0.3, spread: 0.4 + k * 0.2, width: 0.1 + k * 0.3, tail: 0.3 + k * 0.2, peak_db: -3 - k * 2 });
+      out.push({ seq: this.punchSeq, t: this.punchLast, punch_db: base[0] + j(1.5), attack_ms: base[1] + j(2), bands, flash: base[2] + j(6), sparkle: 0.2 + k * 0.3, spread: 0.4 + k * 0.2, width: 0.1 + k * 0.3, tail: 0.3 + k * 0.2, peak_db: -3 - k * 2, body_db: base[0] - 4 + k * 2 + j(1) });
     }
     return out.filter((h) => h.seq > after);
   }
