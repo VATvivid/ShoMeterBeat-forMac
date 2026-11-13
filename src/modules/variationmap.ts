@@ -76,7 +76,7 @@ function toView(f: number[]): Float32Array {
   return v;
 }
 
-interface Ev extends SoundEvent { v: Float32Array; z: Float32Array; x: number; y: number; cluster: number; nov: number; novG: number; novNew: boolean; novD: number }
+interface Ev extends SoundEvent { v: Float32Array; z: Float32Array; x: number; y: number; cluster: number; nov: number; novG: number; novNew: boolean; novD: number; nearD: number }
 interface Cluster { id: number; center: Float32Array; n: number; lastT: number; x: number; y: number; spread: number }
 
 export class VariationMapModule implements Module {
@@ -152,7 +152,7 @@ export class VariationMapModule implements Module {
   private ingest(e: SoundEvent) {
     if (e.seq <= this.lastSeq || e.features.length !== N_DIM) return;
     this.lastSeq = e.seq;
-    const ev: Ev = { ...e, v: toView(e.features), z: new Float32Array(N_VIEW), x: 0, y: 0, cluster: 0, nov: 0, novG: 0, novNew: true, novD: 0 };
+    const ev: Ev = { ...e, v: toView(e.features), z: new Float32Array(N_VIEW), x: 0, y: 0, cluster: 0, nov: 0, novG: 0, novNew: true, novD: 0, nearD: Infinity };
     this.events.push(ev);
     while (this.events.length > this.windowN) this.events.shift();
     this.restandardize();
@@ -266,6 +266,8 @@ export class VariationMapModule implements Module {
     for (let i = idx - 1; i >= 0; i--) if (this.events[i].cluster === ev.cluster) { prev = this.events[i]; break; }
     ev.novNew = !prev;
     if (!prev) prev = idx > 0 ? this.events[idx - 1] : null;
+    ev.nearD = Infinity;
+    for (let i = idx - 1; i >= 0; i--) ev.nearD = Math.min(ev.nearD, this.dist(ev.z, this.events[i].z));
     if (!prev) { ev.nov = 0; ev.novG = 0; ev.novD = 0; return; }
     const gd = this.groupDist(ev.z, prev.z);
     ev.novD = Math.sqrt(gd[0] ** 2 + gd[1] ** 2 + gd[2] ** 2);
@@ -275,7 +277,7 @@ export class VariationMapModule implements Module {
 
   /** Combo bookkeeping for the newest event (see the module comment). */
   private updateCombo(ev: Ev) {
-    const repeat = !ev.novNew && ev.novD <= this.similar;
+    const repeat = ev.nearD <= this.similar;
     const prev = this.comboBy.get(ev.cluster) ?? 0;
     let n: number;
     if (ev.novNew) { n = 1; this.comboBump = 0.5; }
@@ -458,7 +460,7 @@ export class VariationMapModule implements Module {
       const e = shown[i];
       const bx = x + (n - shown.length + i) * bw + 1;
       const top = yOf(e.nov);
-      const repeat = e.novD <= this.similar && !e.novNew;
+      const repeat = e.nearD <= this.similar;
       const col = repeat ? theme("clip") : colorOf(e.cluster);
       if (e.novNew) {
         ctx.strokeStyle = withAlpha(col, 0.8); ctx.strokeRect(Math.round(bx) + 0.5, Math.round(top) + 0.5, Math.max(1, bw - 2), y + bh - 1 - top);
