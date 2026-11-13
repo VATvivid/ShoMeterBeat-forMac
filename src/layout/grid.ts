@@ -450,7 +450,12 @@ export class Grid {
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
         this.showGuides(resolved, t.id);
-        this.preview = resolved;
+        // Preview = every tile at its would-be rect, so the grid size (and cell size) during the
+        // drag is computed from the whole layout, not just the few tiles the resolver returned.
+        const merged: Record<string, Rect> = {};
+        for (const [id, r] of Object.entries(this.layout)) if (r.on) merged[id] = { x: r.x, y: r.y, w: r.w, h: r.h };
+        Object.assign(merged, resolved);
+        this.preview = merged;
         if (mode === "resize") this.place(t, next);
       };
       const finish = async (ev: PointerEvent) => {

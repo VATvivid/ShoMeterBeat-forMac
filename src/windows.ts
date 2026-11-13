@@ -84,6 +84,8 @@ async function openPopWindow(e: PopWin) {
     x: e.x / scale, y: e.y / scale, width: e.w / scale, height: e.h / scale,
     minWidth: 160, minHeight: 100,
     decorations: false, alwaysOnTop: e.pinned, theme: "dark", focus: true,
+    // Test hook: a verification build may set this so pop-outs share the main window's WebView2 flags (remote debugging).
+    ...(localStorage.getItem("rm.debug.browserArgs") ? { additionalBrowserArgs: localStorage.getItem("rm.debug.browserArgs")! } : {}),
   });
   await new Promise<void>((resolve) => {
     win.once("tauri://created", () => resolve());
