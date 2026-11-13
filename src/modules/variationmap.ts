@@ -6,17 +6,59 @@ import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
 
 // Live Variation Map: every detected sound event (onset clip → 58-d feature vector
-// from the engine) becomes a dot on a 2-D map (PCA of the standardised features over
-// the recent window). Similar sounds cluster; clusters are formed online by a
-// distance radius. When the same cluster fires several times in a row with nearly
-// identical features, a repetition warning is raised — the question game audio
-// randomisation is meant to answer ("do my footsteps / hits / shots really vary?").
+// from the engine, see src-tauri/src/audio/events.rs) becomes a dot on a 2-D map (PCA
+// of the standardised, group-weighted features over the recent window). Similar sounds
+// cluster; clusters are formed online by a distance radius. When the same cluster fires
+// several times in a row with nearly identical features, a repetition warning is raised
+// — the question game audio randomisation is meant to answer ("do my footsteps / hits /
+// shots really vary?").
+//
+// Feature groups (so brightness alone cannot dominate the map):
+//   음색 timbre  — 12 band means of the spectro-temporal patch + centroid / bandwidth /
+//                 roll-off / flatness / zero-crossing rate
+//   시간 envelope — 48 patch deviations from the band mean (how each band's energy moves
+//                 across attack / early / body / tail) + attack / decay / length
+//   세기 level   — crest, peak
+// Each group gets the same total weight by default (sliders 0…2 in the menu). The
+// novelty strip under the map shows, per hit, how far it is from the previous hit of
+// the same cluster (as a share of the cluster radius) and which group changed most.
 
 const N_DIM = 58;
+const N_VIEW = 70; // 12 band means + 48 shape + 4 spectral + zcr + 3 envelope + 2 level
+const GROUP_NAMES = ["음색", "시간", "세기"] as const;
+const GROUP_SHORT = ["음", "시", "세"];
 const POLL_MS = 200;
 const PALETTE = ["sig", "peak", "sig-2", "target", "clip", "fg-1", "sig", "peak"];
 
-interface Ev extends SoundEvent { z: Float32Array; x: number; y: number; cluster: number }
+/** Group of every view dimension: 0 timbre, 1 envelope, 2 level. */
+const GROUP = new Uint8Array(N_VIEW);
+for (let i = 0; i < 12; i++) GROUP[i] = 0;
+for (let i = 12; i < 60; i++) GROUP[i] = 1;
+for (let i = 60; i < 64; i++) GROUP[i] = 0;
+GROUP[64] = 1; GROUP[65] = 1; GROUP[66] = 1;
+GROUP[67] = 2; GROUP[68] = 2;
+GROUP[69] = 0; // zcr
+const GROUP_N = [0, 0, 0];
+for (const g of GROUP) GROUP_N[g]++;
+
+/** 58-d engine features → 70-d view (band means, shape deviations, descriptors). */
+function toView(f: number[]): Float32Array {
+  const v = new Float32Array(N_VIEW);
+  for (let b = 0; b < 12; b++) {
+    let m = 0;
+    for (let s = 0; s < 4; s++) m += f[s * 12 + b];
+    m /= 4;
+    v[b] = m;
+    for (let s = 0; s < 4; s++) v[12 + s * 12 + b] = f[s * 12 + b] - m;
+  }
+  v[60] = f[48]; v[61] = f[49]; v[62] = f[50]; v[63] = f[51];
+  v[64] = f[52]; v[65] = f[53]; v[66] = f[54];
+  v[67] = f[55]; v[68] = f[56];
+  v[69] = f[57];
+  return v;
+}
+
+interface Ev extends SoundEvent { v: Float32Array; z: Float32Array; x: number; y: number; cluster: number; nov: number; novG: number; novNew: boolean; novD: number }
 interface Cluster { id: number; center: Float32Array; n: number; lastT: number; x: number; y: number; spread: number }
 
 export class VariationMapModule implements Module {
@@ -28,22 +70,27 @@ export class VariationMapModule implements Module {
   private lastSeq = 0;
   private lastPoll = 0;
   private polling = false;
-  private axes: Float32Array[] = [new Float32Array(N_DIM), new Float32Array(N_DIM)];
+  private axes: Float32Array[] = [new Float32Array(N_VIEW), new Float32Array(N_VIEW)];
   private axesReady = false;
   private warn = { text: "", until: 0, ids: [] as number[] };
   private clock = 0;
   private lastEventClock = 0;
   private sentK = -1;
+  private dimW = new Float32Array(N_VIEW);
 
   private get windowN() { return modSetting(this.id, "window", 200); }
   private get radius() { return modSetting(this.id, "radius", 4.5); }
   private get repeatN() { return modSetting(this.id, "repeat", 3); }
   private get similar() { return modSetting(this.id, "similar", 2.0); }
   private get onsetK() { return modSetting(this.id, "onsetK", 2.5); }
+  private get showNovelty() { return modSetting(this.id, "novelty", true); }
+  private groupW(g: number) { return modSetting(this.id, `w${g}`, 1); }
 
   settings(): SettingItem[] {
     return [
       { type: "select", label: "이벤트 창", value: String(this.windowN), options: [50, 100, 200, 500].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "window", Number(v)) },
+      ...[0, 1, 2].map((g): SettingItem => ({ type: "range", label: `가중치 · ${GROUP_NAMES[g]}${g === 1 ? " (포락선)" : ""}`, value: this.groupW(g), min: 0, max: 2, step: 0.25, format: (v) => `×${v.toFixed(2)}`, onChange: (v) => { setModSetting(this.id, `w${g}`, v); this.rebuild(); } })),
+      { type: "toggle", label: "신규성 띠 표시", value: this.showNovelty, onChange: (v) => setModSetting(this.id, "novelty", v) },
       { type: "range", label: "군집 반경", value: this.radius, min: 2, max: 9, step: 0.5, format: (v) => v.toFixed(1), onChange: (v) => setModSetting(this.id, "radius", v) },
       { type: "range", label: "반복 판정 (연속 횟수)", value: this.repeatN, min: 2, max: 8, step: 1, format: (v) => `${v}회`, onChange: (v) => setModSetting(this.id, "repeat", v) },
       { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 5, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
@@ -54,7 +101,9 @@ export class VariationMapModule implements Module {
 
   headReadout() {
     const live = this.events.filter((e) => this.clock - e.t < 10).length;
-    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${this.warn.until > this.clock ? "  ⚠ 반복" : ""}`;
+    const last = this.events[this.events.length - 1];
+    const nov = last && this.events.length > 1 ? `  ·  Δ${Math.round(last.nov * 100)}% ${GROUP_NAMES[last.novG]}` : "";
+    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${nov}${this.warn.until > this.clock ? "  ⚠ 반복" : ""}`;
   }
 
   private poll() {
@@ -71,48 +120,64 @@ export class VariationMapModule implements Module {
   private ingest(e: SoundEvent) {
     if (e.seq <= this.lastSeq || e.features.length !== N_DIM) return;
     this.lastSeq = e.seq;
-    const ev: Ev = { ...e, z: new Float32Array(N_DIM), x: 0, y: 0, cluster: 0 };
+    const ev: Ev = { ...e, v: toView(e.features), z: new Float32Array(N_VIEW), x: 0, y: 0, cluster: 0, nov: 0, novG: 0, novNew: true, novD: 0 };
     this.events.push(ev);
     while (this.events.length > this.windowN) this.events.shift();
     this.restandardize();
     this.updateAxes();
     this.assignCluster(ev);
+    this.novelty(ev);
     this.project();
     this.checkRepetition();
     this.lastEventClock = this.clock;
   }
 
-  /** Standardise features over the window (robust to scale differences between dims). */
-  private restandardize() {
-    const n = this.events.length;
-    const mean = new Float32Array(N_DIM), std = new Float32Array(N_DIM);
-    for (const e of this.events) for (let i = 0; i < N_DIM; i++) mean[i] += e.features[i] / n;
-    for (const e of this.events) for (let i = 0; i < N_DIM; i++) std[i] += (e.features[i] - mean[i]) ** 2 / n;
-    for (let i = 0; i < N_DIM; i++) std[i] = Math.sqrt(std[i]) || 1;
-    for (const e of this.events) for (let i = 0; i < N_DIM; i++) e.z[i] = (e.features[i] - mean[i]) / std[i];
+  /** Re-weights and re-clusters the window after a weight change. */
+  private rebuild() {
+    if (!this.events.length) return;
+    this.restandardize();
+    this.axesReady = false;
+    this.updateAxes();
+    this.clusters = []; this.nextCluster = 1;
+    for (const ev of this.events) { this.assignCluster(ev); }
+    for (let i = 0; i < this.events.length; i++) this.novelty(this.events[i], i);
+    this.project();
   }
 
-  /** Top-2 principal axes of the standardised window (power iteration with deflation). */
+  /** Standardise over the window, then scale each dim so every group's total variance is
+   *  weight × (N_VIEW / 3) — with all weights 1 the overall scale matches plain z-scores,
+   *  so the radius / 동일 distances keep their meaning. */
+  private restandardize() {
+    const n = this.events.length;
+    const mean = new Float32Array(N_VIEW), std = new Float32Array(N_VIEW);
+    for (const e of this.events) for (let i = 0; i < N_VIEW; i++) mean[i] += e.v[i] / n;
+    for (const e of this.events) for (let i = 0; i < N_VIEW; i++) std[i] += (e.v[i] - mean[i]) ** 2 / n;
+    for (let i = 0; i < N_VIEW; i++) std[i] = Math.sqrt(std[i]) || 1;
+    for (let i = 0; i < N_VIEW; i++) this.dimW[i] = Math.sqrt(this.groupW(GROUP[i]) * (N_VIEW / 3) / GROUP_N[GROUP[i]]);
+    for (const e of this.events) for (let i = 0; i < N_VIEW; i++) e.z[i] = ((e.v[i] - mean[i]) / std[i]) * this.dimW[i];
+  }
+
+  /** Top-2 principal axes of the weighted window (power iteration with deflation). */
   private updateAxes() {
     const n = this.events.length;
     if (n < 3) return;
-    const cov = new Float32Array(N_DIM * N_DIM);
-    for (const e of this.events) for (let i = 0; i < N_DIM; i++) { const zi = e.z[i]; for (let j = i; j < N_DIM; j++) cov[i * N_DIM + j] += zi * e.z[j] / n; }
-    for (let i = 0; i < N_DIM; i++) for (let j = 0; j < i; j++) cov[i * N_DIM + j] = cov[j * N_DIM + i];
-    const mul = (v: Float32Array) => { const o = new Float32Array(N_DIM); for (let i = 0; i < N_DIM; i++) { let s = 0; for (let j = 0; j < N_DIM; j++) s += cov[i * N_DIM + j] * v[j]; o[i] = s; } return o; };
-    const norm = (v: Float32Array) => { let s = 0; for (const x of v) s += x * x; s = Math.sqrt(s) || 1; for (let i = 0; i < N_DIM; i++) v[i] /= s; return v; };
-    const dot = (a: Float32Array, b: Float32Array) => { let s = 0; for (let i = 0; i < N_DIM; i++) s += a[i] * b[i]; return s; };
+    const cov = new Float32Array(N_VIEW * N_VIEW);
+    for (const e of this.events) for (let i = 0; i < N_VIEW; i++) { const zi = e.z[i]; for (let j = i; j < N_VIEW; j++) cov[i * N_VIEW + j] += zi * e.z[j] / n; }
+    for (let i = 0; i < N_VIEW; i++) for (let j = 0; j < i; j++) cov[i * N_VIEW + j] = cov[j * N_VIEW + i];
+    const mul = (v: Float32Array) => { const o = new Float32Array(N_VIEW); for (let i = 0; i < N_VIEW; i++) { let s = 0; for (let j = 0; j < N_VIEW; j++) s += cov[i * N_VIEW + j] * v[j]; o[i] = s; } return o; };
+    const norm = (v: Float32Array) => { let s = 0; for (const x of v) s += x * x; s = Math.sqrt(s) || 1; for (let i = 0; i < N_VIEW; i++) v[i] /= s; return v; };
+    const dot = (a: Float32Array, b: Float32Array) => { let s = 0; for (let i = 0; i < N_VIEW; i++) s += a[i] * b[i]; return s; };
     const prev = this.axes;
     const axes: Float32Array[] = [];
     for (let k = 0; k < 2; k++) {
-      let v: Float32Array = this.axesReady ? Float32Array.from(prev[k]) : new Float32Array(N_DIM).map((_, i) => Math.sin(i * (k + 1) + 0.3));
+      let v: Float32Array = this.axesReady ? Float32Array.from(prev[k]) : new Float32Array(N_VIEW).map((_, i) => Math.sin(i * (k + 1) + 0.3));
       norm(v);
       for (let it = 0; it < 25; it++) {
         let w = mul(v);
-        for (const a of axes) { const d = dot(w, a); for (let i = 0; i < N_DIM; i++) w[i] -= d * a[i]; }
+        for (const a of axes) { const d = dot(w, a); for (let i = 0; i < N_VIEW; i++) w[i] -= d * a[i]; }
         v = norm(w);
       }
-      if (this.axesReady && dot(v, prev[k]) < 0) for (let i = 0; i < N_DIM; i++) v[i] = -v[i]; // keep orientation stable
+      if (this.axesReady && dot(v, prev[k]) < 0) for (let i = 0; i < N_VIEW; i++) v[i] = -v[i]; // keep orientation stable
       axes.push(v);
     }
     this.axes = axes;
@@ -123,7 +188,7 @@ export class VariationMapModule implements Module {
     if (!this.axesReady) return;
     for (const e of this.events) {
       let x = 0, y = 0;
-      for (let i = 0; i < N_DIM; i++) { x += e.z[i] * this.axes[0][i]; y += e.z[i] * this.axes[1][i]; }
+      for (let i = 0; i < N_VIEW; i++) { x += e.z[i] * this.axes[0][i]; y += e.z[i] * this.axes[1][i]; }
       e.x = x; e.y = y;
     }
     for (const c of this.clusters) {
@@ -135,7 +200,14 @@ export class VariationMapModule implements Module {
     }
   }
 
-  private dist(a: Float32Array, b: Float32Array) { let s = 0; for (let i = 0; i < N_DIM; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s); }
+  private dist(a: Float32Array, b: Float32Array) { let s = 0; for (let i = 0; i < N_VIEW; i++) s += (a[i] - b[i]) ** 2; return Math.sqrt(s); }
+
+  /** Per-group distances (weighted z space). */
+  private groupDist(a: Float32Array, b: Float32Array): number[] {
+    const s = [0, 0, 0];
+    for (let i = 0; i < N_VIEW; i++) s[GROUP[i]] += (a[i] - b[i]) ** 2;
+    return s.map(Math.sqrt);
+  }
 
   private assignCluster(ev: Ev) {
     let best: Cluster | null = null, bd = Infinity;
@@ -143,7 +215,7 @@ export class VariationMapModule implements Module {
     if (best && bd <= this.radius) {
       best.n++; best.lastT = ev.t;
       const a = Math.min(0.3, 1 / best.n);
-      for (let i = 0; i < N_DIM; i++) best.center[i] += (ev.z[i] - best.center[i]) * a;
+      for (let i = 0; i < N_VIEW; i++) best.center[i] += (ev.z[i] - best.center[i]) * a;
       ev.cluster = best.id;
     } else {
       const c: Cluster = { id: this.nextCluster++, center: Float32Array.from(ev.z), n: 1, lastT: ev.t, x: 0, y: 0, spread: 0 };
@@ -153,6 +225,20 @@ export class VariationMapModule implements Module {
     // drop clusters with no members in the window
     const alive = new Set(this.events.map((e) => e.cluster));
     this.clusters = this.clusters.filter((c) => alive.has(c.id));
+  }
+
+  /** How different is this hit from the previous hit of the same cluster (or, for a new
+   *  cluster, from the previous hit of any kind)? Share of the cluster radius, 0…1+. */
+  private novelty(ev: Ev, idx = this.events.length - 1) {
+    let prev: Ev | null = null;
+    for (let i = idx - 1; i >= 0; i--) if (this.events[i].cluster === ev.cluster) { prev = this.events[i]; break; }
+    ev.novNew = !prev;
+    if (!prev) prev = idx > 0 ? this.events[idx - 1] : null;
+    if (!prev) { ev.nov = 0; ev.novG = 0; ev.novD = 0; return; }
+    const gd = this.groupDist(ev.z, prev.z);
+    ev.novD = Math.sqrt(gd[0] ** 2 + gd[1] ** 2 + gd[2] ** 2);
+    ev.nov = Math.min(1.5, ev.novD / this.radius);
+    ev.novG = gd.indexOf(Math.max(...gd));
   }
 
   private checkRepetition() {
@@ -174,7 +260,8 @@ export class VariationMapModule implements Module {
     this.clock += dt;
     this.poll();
     const listW = w > 320 ? 118 : 0;
-    const x0 = 10, x1 = w - listW - 8, y0 = 10, y1 = h - 10;
+    const stripH = this.showNovelty && h > 170 ? 46 : 0;
+    const x0 = 10, x1 = w - listW - 8, y0 = 10, y1 = h - 10 - stripH;
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 40 || ph < 40) return;
 
@@ -185,6 +272,7 @@ export class VariationMapModule implements Module {
     ctx.beginPath(); ctx.moveTo(x0, Math.round(cy) + 0.5); ctx.lineTo(x1, Math.round(cy) + 0.5); ctx.moveTo(Math.round(cx) + 0.5, y0); ctx.lineTo(Math.round(cx) + 0.5, y1); ctx.stroke();
 
     const evs = this.events;
+    if (stripH) this.drawNovelty(ctx, x0, y1 + 6, pw, stripH - 6);
     if (evs.length < 3 || !this.axesReady) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(11); ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(inTauri ? `이벤트 대기 중 (${evs.length}/3) — 효과음을 재생하세요` : "브라우저 미리보기", cx, cy);
@@ -235,7 +323,9 @@ export class VariationMapModule implements Module {
       ctx.fillText(`⚠ ${this.warn.text}`, x0 + 8, y0 + 11);
     }
     ctx.fillStyle = theme("fg-2"); ctx.font = font(9); ctx.textAlign = "right"; ctx.textBaseline = "bottom";
-    ctx.fillText("PCA-1 →   ↑ PCA-2", x1 - 4, y1 - 3);
+    const ws = [0, 1, 2].map((g) => this.groupW(g));
+    const wTxt = ws.every((v) => v === 1) ? "" : `가중 ${ws.map((v, g) => `${GROUP_SHORT[g]}${v.toFixed(2).replace(/\.?0+$/, "")}`).join("·")}   `;
+    ctx.fillText(`${wTxt}PCA-1 →   ↑ PCA-2`, x1 - 4, y1 - 3);
 
     // cluster list
     if (listW) {
@@ -255,5 +345,48 @@ export class VariationMapModule implements Module {
         ctx.textAlign = "left";
       });
     }
+  }
+
+  /** Novelty strip: one bar per recent hit — height = distance to the previous hit of the
+   *  same cluster as a share of the cluster radius; red when within the 동일 distance
+   *  (a repeat), hollow when the hit opened a new cluster; letter = group that changed most. */
+  private drawNovelty(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+    const labelH = 11;
+    const bh = h - labelH;
+    const n = Math.max(8, Math.min(60, Math.floor(w / 7)));
+    const shown = this.events.slice(-n);
+    const bw = w / n;
+    const colorOf = (cid: number) => theme(PALETTE[(cid - 1) % PALETTE.length]);
+    ctx.strokeStyle = theme("grid"); ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, bh - 1);
+    // 100 % line (= one cluster radius) and the 동일 line
+    const yOf = (v: number) => y + bh - Math.min(1, v / 1.2) * (bh - 2) - 1;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(x, Math.round(yOf(1)) + 0.5); ctx.lineTo(x + w, Math.round(yOf(1)) + 0.5); ctx.stroke();
+    ctx.strokeStyle = withAlpha(theme("clip"), 0.5);
+    const ySim = Math.round(yOf(this.similar / this.radius)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, ySim); ctx.lineTo(x + w, ySim); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.font = font(9);
+    for (let i = 0; i < shown.length; i++) {
+      const e = shown[i];
+      const bx = x + (n - shown.length + i) * bw + 1;
+      const top = yOf(e.nov);
+      const repeat = e.novD <= this.similar && !e.novNew;
+      const col = repeat ? theme("clip") : colorOf(e.cluster);
+      if (e.novNew) {
+        ctx.strokeStyle = withAlpha(col, 0.8); ctx.strokeRect(Math.round(bx) + 0.5, Math.round(top) + 0.5, Math.max(1, bw - 2), y + bh - 1 - top);
+      } else {
+        ctx.fillStyle = withAlpha(col, i === shown.length - 1 ? 0.95 : 0.6);
+        ctx.fillRect(bx, top, Math.max(1, bw - 2), y + bh - 1 - top);
+      }
+      if (bw >= 9 && !e.novNew) { ctx.fillStyle = repeat ? theme("clip") : theme("fg-2"); ctx.fillText(GROUP_SHORT[e.novG], bx + (bw - 2) / 2, y + bh + 1); }
+    }
+    ctx.textAlign = "left"; ctx.fillStyle = theme("fg-2"); ctx.font = font(9);
+    const last = shown[shown.length - 1];
+    const lastTxt = last && this.events.length > 1 ? (last.novNew ? "새 군집" : `직전 같은 군집 대비 ${Math.round(last.nov * 100)}% 다름 · 가장 달라진 것: ${GROUP_NAMES[last.novG]}${last.novD <= this.similar ? " · 동일 수준" : ""}`) : "신규성: 히트마다 직전 같은 군집 히트와의 거리(군집 반경 = 100 %)";
+    ctx.fillText(lastTxt, x + 3, y + 2);
+    ctx.textAlign = "right";
+    ctx.fillText("음=음색 시=시간 세=세기", x + w - 3, y + bh + 1);
   }
 }

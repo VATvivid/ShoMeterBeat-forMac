@@ -1,8 +1,10 @@
 //! Sound-event extraction for the Variation Map: when the history's spectral-flux
 //! onset detector fires, a short clip (−20 ms … +320 ms around the onset) is cut
 //! from the ring and summarised as a feature vector:
-//!   [0..24)  mean log energy per Bark-like band (24 bands)
-//!   [24..48) band slope: second-half minus first-half log energy
+//!   [0..48)  spectro-temporal patch: 4 time slices × 12 bands (Bark pairs), log energy
+//!            relative to the clip's mean energy — index s*12 + b. Slices (clip time,
+//!            onset at 20 ms): 0–60 ms attack, 60–120 early body, 120–200 body, 200–340 tail.
+//!            Level is removed so the patch is timbre + envelope shape per band.
 //!   48 centroid (log2 Hz)  49 bandwidth (oct)  50 roll-off 85 % (log2 Hz)  51 flatness
 //!   52 attack ms (onset → envelope peak)  53 decay ms (peak → −20 dB)  54 length ms (> −40 dB)
 //!   55 crest dB  56 peak dBFS  57 zero-crossing rate (per ms)
@@ -106,13 +108,27 @@ impl FeatureExtractor {
             }
         }
         let nf = n_frames as f32;
-        let half = n_frames / 2;
-        for b in 0..24 {
-            let mean = band_log.iter().map(|fr| fr[b]).sum::<f32>() / nf;
-            let first = band_log[..half.max(1)].iter().map(|fr| fr[b]).sum::<f32>() / half.max(1) as f32;
-            let second = band_log[half..].iter().map(|fr| fr[b]).sum::<f32>() / (n_frames - half).max(1) as f32;
-            f[b] = mean;
-            f[24 + b] = second - first;
+        // spectro-temporal patch: power-average each (slice, band pair), relative to clip mean
+        let frame_ms = |fi: usize| (fi * HOP + WIN / 2) as f32 / self.sr * 1000.0;
+        let slice_of = |ms: f32| if ms < 60.0 { 0 } else if ms < 120.0 { 1 } else if ms < 200.0 { 2 } else { 3 };
+        let mut acc = [[0.0f64; 12]; 4];
+        let mut cnt = [0usize; 4];
+        let mut all = 0.0f64;
+        for (fi, fr) in band_log.iter().enumerate() {
+            let s = slice_of(frame_ms(fi));
+            cnt[s] += 1;
+            for b in 0..12 {
+                let p = 10f64.powf(fr[2 * b] as f64 / 10.0) + 10f64.powf(fr[2 * b + 1] as f64 / 10.0);
+                acc[s][b] += p;
+                all += p;
+            }
+        }
+        let mean_db = 10.0 * (all / (nf as f64 * 12.0) + 1e-12).log10();
+        for s in 0..4 {
+            for b in 0..12 {
+                let p = if cnt[s] > 0 { acc[s][b] / cnt[s] as f64 } else { 1e-12 };
+                f[s * 12 + b] = (10.0 * (p + 1e-12).log10() - mean_db) as f32;
+            }
         }
         f[48] = cent / nf;
         f[49] = bw / nf;
@@ -167,5 +183,31 @@ mod tests {
         assert!(b[48] > a[48] + 2.0, "centroid {} vs {}", a[48], b[48]); // > 2 octaves apart
         assert!(a[52] < 15.0 && b[52] < 15.0, "attack {} {}", a[52], b[52]);
         assert!(a[53] > 30.0, "decay {}", a[53]);
+        // patch: the dark click's energy sits in low band pairs, the bright one's in high
+        let band_mean = |f: &[f32], b: usize| (0..4).map(|s| f[s * 12 + b]).sum::<f32>() / 4.0;
+        assert!(band_mean(&a, 1) > band_mean(&a, 9) + 10.0, "dark {} vs {}", band_mean(&a, 1), band_mean(&a, 9));
+        assert!(band_mean(&b, 9) > band_mean(&b, 1) + 10.0, "bright {} vs {}", band_mean(&b, 9), band_mean(&b, 1));
+    }
+
+    #[test]
+    fn patch_separates_short_from_long_decay_at_equal_spectrum() {
+        let sr = 48_000u32;
+        let mut fx = FeatureExtractor::new(sr);
+        let n = ((PRE_MS + POST_MS) / 1000.0 * sr as f32) as usize;
+        let mk = |rate: f32| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let t = i as f32 / sr as f32 - PRE_MS / 1000.0;
+                    if t < 0.0 { 0.0 } else { (-t * rate).exp() * (2.0 * std::f32::consts::PI * 800.0 * t).sin() }
+                })
+                .collect()
+        };
+        let short = fx.features(&mk(60.0));
+        let long = fx.features(&mk(6.0));
+        // same band: the short hit's tail slice falls far below its attack slice, the long one's stays close
+        let b = 4; // 800 Hz lies in Bark pair 4 (770–1080 Hz)
+        let drop_short = short[b] - short[36 + b];
+        let drop_long = long[b] - long[36 + b];
+        assert!(drop_short > drop_long + 10.0, "short drop {drop_short} vs long drop {drop_long}");
     }
 }

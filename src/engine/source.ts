@@ -294,7 +294,13 @@ class MockSource implements Source {
       const base = [[-30, 9.5, 1.2, 10, 60], [-26, 11.5, 1.6, 4, 25], [-34, 8.0, 2.0, 25, 120]][pool];
       const repeat = Math.floor(this.evLast / 0.5) % 11 === 0;
       const j = (k: number) => (repeat ? 0 : (Math.random() - 0.5) * k);
-      const f = new Array(58).fill(0).map((_, i) => i < 24 ? base[0] - i * 0.8 + pool * 3 * Math.sin(i / 3) + j(3) : i < 48 ? j(2) : 0);
+      // [0..48) spectro-temporal patch (4 slices x 12 bands, relative dB): each pool has its own
+      // band tilt and its own decay per slice; level lives in the descriptors below.
+      const f = new Array(58).fill(0).map((_, i) => {
+        if (i >= 48) return 0;
+        const s = Math.floor(i / 12), b = i % 12;
+        return [-1.2, 0.4, -2.0][pool] * (b - 5) + pool * 2 * Math.sin(b / 2) - s * [4, 9, 2][pool] + j(3);
+      });
       f[48] = base[1] + j(0.4); f[49] = base[2] + j(0.3); f[50] = base[1] + 1 + j(0.4); f[51] = 0.2 + j(0.1);
       f[52] = base[3] + j(3); f[53] = base[4] + j(10); f[54] = base[4] * 2 + j(20); f[55] = 12 + j(2); f[56] = -8 + j(2); f[57] = 2 + pool + j(0.5);
       this.evSeq++;
