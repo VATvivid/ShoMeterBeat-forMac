@@ -56,7 +56,7 @@ for (let i = 0; i < 60; i++) STD_FLOOR[i] = 3;          // band means / shape: 3
 STD_FLOOR[60] = 0.25; STD_FLOOR[61] = 0.25; STD_FLOOR[62] = 0.25; // centroid / bandwidth / roll-off (log2 Hz, oct)
 STD_FLOOR[63] = 0.05;                                   // flatness
 STD_FLOOR[64] = 8; STD_FLOOR[65] = 20; STD_FLOOR[66] = 40; // attack / decay / length (ms)
-STD_FLOOR[67] = 2; STD_FLOOR[68] = 2;                   // crest / peak (dB)
+STD_FLOOR[67] = 3; STD_FLOOR[68] = 3;                   // crest / peak (dB)
 STD_FLOOR[69] = 0.5;                                    // zero-crossing rate (/ms)
 
 /** 58-d engine features → 70-d view (band means, shape deviations, descriptors). */
@@ -94,31 +94,34 @@ export class VariationMapModule implements Module {
   private clock = 0;
   private sentK = -1;
   private dimW = new Float32Array(N_VIEW);
-  private combo = 0;
+  private combo = 0;              // combo of the newest event's cluster (shown)
   private comboBest = 0;
   private comboCluster = 0;
+  private comboBy = new Map<number, number>(); // cluster id → current chain length
   private comboBump = 0;      // 1 right after an increment → 0
   private comboBreak = 0;     // 1 right after a repeat → 0
   private burst = 0;          // burst ring at the newest dot
 
   private get windowN() { return modSetting(this.id, "window", 200); }
-  private get radius() { return modSetting(this.id, "radius", 4.5); }
+  private get radius() { return modSetting(this.id, "radius", 6); }
   private get repeatN() { return modSetting(this.id, "repeat", 3); }
   private get similar() { return modSetting(this.id, "similar", 2.0); }
   private get onsetK() { return modSetting(this.id, "onsetK", 2.5); }
   private get showNovelty() { return modSetting(this.id, "novelty", true); }
-  private groupW(g: number) { return modSetting(this.id, `w${g}`, 1); }
+  /** Default weights: 음색 1, 시간 1, 세기 0.5 — level has only two dimensions, and at full weight a
+   *  3 dB peak difference between takes outweighed every timbre difference (measured 2026-11-13). */
+  private groupW(g: number) { return modSetting(this.id, `w${g}`, g === 2 ? 0.5 : 1); }
 
   settings(): SettingItem[] {
     return [
       { type: "select", label: "이벤트 창", value: String(this.windowN), options: [50, 100, 200, 500].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "window", Number(v)) },
       ...[0, 1, 2].map((g): SettingItem => ({ type: "range", label: `가중치 · ${GROUP_NAMES[g]}${g === 1 ? " (포락선)" : ""}`, value: this.groupW(g), min: 0, max: 2, step: 0.25, format: (v) => `×${v.toFixed(2)}`, onChange: (v) => { setModSetting(this.id, `w${g}`, v); this.rebuild(); } })),
       { type: "toggle", label: "신규성 띠 표시", value: this.showNovelty, onChange: (v) => setModSetting(this.id, "novelty", v) },
-      { type: "range", label: "군집 반경", value: this.radius, min: 2, max: 9, step: 0.5, format: (v) => v.toFixed(1), onChange: (v) => setModSetting(this.id, "radius", v) },
+      { type: "range", label: "군집 반경", value: this.radius, min: 2, max: 12, step: 0.5, format: (v) => v.toFixed(1), onChange: (v) => setModSetting(this.id, "radius", v) },
       { type: "range", label: "반복 판정 (연속 횟수)", value: this.repeatN, min: 2, max: 8, step: 1, format: (v) => `${v}회`, onChange: (v) => setModSetting(this.id, "repeat", v) },
       { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 5, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
       { type: "range", label: "온셋 감도 (σ)", value: this.onsetK, min: 1, max: 6, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "onsetK", v) },
-      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; } },
+      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; this.comboBy.clear(); } },
     ];
   }
 
@@ -268,18 +271,16 @@ export class VariationMapModule implements Module {
   /** Combo bookkeeping for the newest event (see the module comment). */
   private updateCombo(ev: Ev) {
     const repeat = !ev.novNew && ev.novD <= this.similar;
-    if (repeat) {
-      if (this.combo > 0) this.comboBreak = 1;
-      this.combo = 0;
-    } else if (ev.cluster === this.comboCluster && !ev.novNew) {
-      this.combo++;
-      this.comboBump = 1;
-    } else {
-      this.combo = 1;
-      this.comboBump = 0.5;
-    }
+    const prev = this.comboBy.get(ev.cluster) ?? 0;
+    let n: number;
+    if (ev.novNew) { n = 1; this.comboBump = 0.5; }
+    else if (repeat) { n = 0; if (prev >= 2) this.comboBreak = 1; }
+    else { n = prev + 1; this.comboBump = 1; }
+    this.comboBy.set(ev.cluster, n);
+    for (const id of [...this.comboBy.keys()]) if (!this.clusters.some((c) => c.id === id)) this.comboBy.delete(id);
+    this.combo = n;
     this.comboCluster = ev.cluster;
-    this.comboBest = Math.max(this.comboBest, this.combo);
+    this.comboBest = Math.max(this.comboBest, n);
     this.burst = 1;
   }
 
