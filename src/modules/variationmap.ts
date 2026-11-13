@@ -106,7 +106,10 @@ export class VariationMapModule implements Module {
   private get windowN() { return modSetting(this.id, "window", 200); }
   private get radius() { return modSetting(this.id, "radius", 6); }
   private get repeatN() { return modSetting(this.id, "repeat", 3); }
-  private get similar() { return modSetting(this.id, "similar", 2.0); }
+  /** 동일 distance: an asset replayed through loopback lands 2–4 units from its first play (frame
+   *  jitter, room noise), different takes of one sound 2–9 — so 3.0 flags replays and only the
+   *  most alike takes. Measured 2026-11-13 on game hit sounds. */
+  private get similar() { return modSetting(this.id, "similar", 3.0); }
   private get onsetK() { return modSetting(this.id, "onsetK", 2.5); }
   private get showNovelty() { return modSetting(this.id, "novelty", true); }
   /** Default weights: 음색 1, 시간 1, 세기 0.5 — level has only two dimensions, and at full weight a
@@ -120,7 +123,7 @@ export class VariationMapModule implements Module {
       { type: "toggle", label: "신규성 띠 표시", value: this.showNovelty, onChange: (v) => setModSetting(this.id, "novelty", v) },
       { type: "range", label: "군집 반경", value: this.radius, min: 2, max: 12, step: 0.5, format: (v) => v.toFixed(1), onChange: (v) => setModSetting(this.id, "radius", v) },
       { type: "range", label: "반복 판정 (연속 횟수)", value: this.repeatN, min: 2, max: 8, step: 1, format: (v) => `${v}회`, onChange: (v) => setModSetting(this.id, "repeat", v) },
-      { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 5, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
+      { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 8, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
       { type: "range", label: "온셋 감도 (σ)", value: this.onsetK, min: 1, max: 6, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "onsetK", v) },
       { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; this.comboBy.clear(); } },
     ];
