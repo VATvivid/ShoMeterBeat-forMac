@@ -176,7 +176,6 @@ export class TractModule implements Module {
 
     // ---- static anatomy: spine, skull, brain, nose, eye, nasal cavity, pharynx, trachea
     ctx.fillStyle = withAlpha(theme("fg-2"), 0.35);
-    for (let y = -4.4; y < 10.5; y += 1.75) { const a = P(-4.7, y + 1.3), b = P(-3.5, y); ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y); }
     stroke(Ps([[-3.2, -9.6], [-3.4, -4.0], [-4.4, 1.5], [-5.1, 7.5], [-4.6, 12.8], [-2.6, 16.0], [1.6, 16.7], [5.0, 15.7], [6.9, 13.6], [7.5, 11.6], [8.5, 10.1], [9.7, 9.3], [8.7, 8.6], [8.3, 8.05]]), outline, 1.5);
     stroke(Ps([[-3.8, 9.5], [-3.2, 13.6], [0.5, 15.4], [4.2, 14.4], [5.8, 12.2]]), withAlpha(theme("fg-2"), 0.4), 1);
     {

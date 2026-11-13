@@ -157,6 +157,8 @@ export class EmojiModule implements Module {
   private levelSlow = -120;       // slower level for onset detection
   private lastOnset = -10;
   private onsets: number[] = [];
+  private impact = 0;             // 1 right after a transient → 0 (burst behind the sprite)
+  private impactPow = 0;          // how hard the transient was (0…1)
   private voiced = 0;             // smoothed voiced ratio
   private open = 0;               // mouth opening 0..1
   private mouthShape: Mouth = "closed";
@@ -210,7 +212,10 @@ export class EmojiModule implements Module {
       this.onsets.push(this.clock);
       if (this.onsets.length > 12) this.onsets.shift();
       this.shake = 1;
+      this.impact = 1;
+      this.impactPow = Math.max(0.2, Math.min(1, (lvl - this.levelSlow - 9) / 15));
     }
+    this.impact = Math.max(0, this.impact - dt * 2.6);
     // rhythmic? intervals of the last 6 onsets agree within 15 %
     let rhythmic = false;
     if (this.onsets.length >= 5) {
@@ -296,6 +301,26 @@ export class EmojiModule implements Module {
     const sprite = S[this.scene.sprite];
     const overlay = this.scene.sprite === "face" ? faceOverlay(this.scene.mouth, this.open) : [];
     const sz = size * sc;
+    // impact burst behind the sprite: a flash, an expanding shockwave ring and manga-style
+    // impact lines, all sized by how hard the transient hit and fading over ~0.4 s
+    if (this.impact > 0) {
+      const k = this.impact, prog = 1 - k, pw = this.impactPow;
+      const icx = cx + ox, icy = baseY + oy;
+      ctx.save();
+      ctx.fillStyle = withAlpha(theme("target"), 0.35 * k * pw);
+      ctx.beginPath(); ctx.arc(icx, icy, sz * (0.55 + 0.25 * prog), 0, Math.PI * 2); ctx.fill();
+      const rr = sz * (0.5 + 1.1 * prog * (0.6 + 0.4 * pw));
+      ctx.strokeStyle = withAlpha(theme("peak"), 0.9 * k); ctx.lineWidth = Math.max(1.5, sz * 0.06 * k);
+      ctx.beginPath(); ctx.arc(icx, icy, rr, 0, Math.PI * 2); ctx.stroke();
+      const n = 12, r0 = sz * (0.55 + 0.5 * prog), len = sz * (0.25 + 0.55 * pw) * (0.5 + 0.5 * k);
+      ctx.strokeStyle = withAlpha(theme("fg-0"), 0.85 * k); ctx.lineWidth = Math.max(1, sz * 0.03);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + (i % 2 ? 0.13 : 0);
+        const l = len * (i % 3 === 0 ? 1 : 0.6);
+        ctx.beginPath(); ctx.moveTo(icx + Math.cos(a) * r0, icy + Math.sin(a) * r0); ctx.lineTo(icx + Math.cos(a) * (r0 + l), icy + Math.sin(a) * (r0 + l)); ctx.stroke();
+      }
+      ctx.restore();
+    }
     const ps = sz / 16;
     const left = cx - sz / 2 + ox, top = baseY - sz / 2 + oy;
     ctx.imageSmoothingEnabled = false;
