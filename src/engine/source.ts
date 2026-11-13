@@ -47,7 +47,14 @@ export interface Source {
   subtitlesSince(after: number): Promise<Subtitle[]>;
   setSubtitles(enabled: boolean, lang: string, model: string): Promise<void>;
   subtitleStatus(): Promise<SubStatus>;
+  /** Punch hits (onset → 280 ms weighted transient block) with seq > after. */
+  punchHitsSince(after: number): Promise<PunchHit[]>;
+  punchStatus(): Promise<PunchStats>;
+  punchReset(): Promise<void>;
 }
+
+export interface PunchHit { seq: number; t: number; punch_db: number; attack_ms: number; bands: number[]; flash: number; sparkle: number; spread: number; width: number; tail: number; peak_db: number }
+export interface PunchStats { momentary: number; tsr: number; pm95: number; mean: number; frames: number }
 
 export interface Subtitle { seq: number; t0: number; t1: number; text: string; lang: string; ms: number }
 export interface SubStatus { enabled: boolean; model: string; loaded: boolean; loading: boolean; lang: string; queue: number; last_ms: number; error: string | null; models_dir: string }
@@ -113,6 +120,9 @@ class TauriSource implements Source {
   subtitlesSince(after: number) { return invoke<Subtitle[]>("subtitles_since", { after }); }
   setSubtitles(enabled: boolean, lang: string, model: string) { return invoke<void>("set_subtitles", { enabled, lang, model }); }
   subtitleStatus() { return invoke<SubStatus>("subtitle_status"); }
+  punchHitsSince(after: number) { return invoke<PunchHit[]>("punch_hits_since", { after }); }
+  punchStatus() { return invoke<PunchStats>("punch_status"); }
+  punchReset() { return invoke<void>("punch_reset"); }
 }
 
 /** Deterministic-ish synthetic music-like signal for browser-only development. */
@@ -182,6 +192,8 @@ class MockSource implements Source {
     const gapT = this.t % 4;
     const breathing = gapT > 3.45 && gapT < 3.85;
     f.flatness = breathing ? 0.55 : 0.08;
+    f.punchM = -40 + 26 * beat;
+    f.tsr = -6 + 14 * beat;
     f.centroid = breathing ? 2800 : 900;
     if (breathing) { f.rms = [-30, -30]; f.lufsM = -28; }
     f.voiced = 0.6 + 0.4 * Math.sin(this.t * 2.3) > 0.5 ? 0.9 : 0.2;
@@ -290,6 +302,27 @@ class MockSource implements Source {
     }
     return out.filter((e) => e.seq > after);
   }
+  private punchLast = 0;
+  private punchSeq = 0;
+  async punchHitsSince(after: number): Promise<PunchHit[]> {
+    // One hit per beat (the mock's 120 bpm pulses), alternating three "variants".
+    const out: PunchHit[] = [];
+    while (this.punchLast + 0.5 <= this.t) {
+      this.punchLast += 0.5;
+      const k = this.punchSeq % 3;
+      const base = [[-14, 3, 35], [-19, 12, 62], [-24, 25, 80]][k];
+      const j = (s: number) => (Math.random() - 0.5) * s;
+      const bands = new Array(9).fill(0).map((_, b) => base[0] - 6 - Math.abs(b - (k === 0 ? 1 : k === 1 ? 4 : 6)) * 5 + j(2));
+      this.punchSeq++;
+      out.push({ seq: this.punchSeq, t: this.punchLast, punch_db: base[0] + j(1.5), attack_ms: base[1] + j(2), bands, flash: base[2] + j(6), sparkle: 0.2 + k * 0.3, spread: 0.4 + k * 0.2, width: 0.1 + k * 0.3, tail: 0.3 + k * 0.2, peak_db: -3 - k * 2 });
+    }
+    return out.filter((h) => h.seq > after);
+  }
+  async punchStatus(): Promise<PunchStats> {
+    const beat = Math.pow(Math.max(0, Math.sin(this.t * Math.PI * 2 * 2)), 8);
+    return { momentary: -40 + 26 * beat, tsr: -6 + 14 * beat, pm95: -15.5, mean: -31.2, frames: Math.floor(this.t * 187) };
+  }
+  async punchReset() { this.punchSeq = 0; }
   async analyzeFile(): Promise<FileAnalysis> { return { duration: 8, sample_rate: 48000, channels: 2, lufs_i: -16.2, lra: 5.1, true_peak: -1.0, sample_peak: -1.3, rms: -14.8, crest: 13.5, bpm: 120, bpm_confidence: 0.8, bpm_agreement: 0.9 }; }
 }
 

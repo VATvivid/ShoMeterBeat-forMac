@@ -11,6 +11,7 @@ pub mod analyzer;
 pub mod capture;
 pub mod frame;
 pub mod loudness;
+pub mod punch;
 pub mod decode;
 pub mod events;
 pub mod recorder;
@@ -109,6 +110,7 @@ pub struct Shared {
     pub mode: Mutex<Mode>,
     pub wave: Mutex<Option<wave::WaveHistory>>,
     pub tagger: Arc<Mutex<tagger::TaggerState>>,
+    pub punch: Mutex<Option<punch::PunchMeter>>,
     pub subtitle: Arc<Mutex<subtitle::SubtitleState>>,
 }
 
@@ -124,6 +126,7 @@ impl Shared {
             mode: Mutex::new(Mode::Auto),
             wave: Mutex::new(None),
             tagger: Arc::new(Mutex::new(tagger::TaggerState::new())),
+            punch: Mutex::new(None),
             subtitle: Arc::new(Mutex::new(subtitle::SubtitleState::new())),
         })
     }
@@ -261,6 +264,7 @@ fn analysis_loop(shared: Arc<Shared>) {
             lufs = Some(loudness::Loudness::new(sr));
             voice = Some(voice::VoiceAnalyzer::new(sr));
             *shared.wave.lock() = Some(wave::WaveHistory::new(sr));
+            *shared.punch.lock() = Some(punch::PunchMeter::new(sr));
         }
         let (Some(an), Some(lufs), Some(voice)) = (an.as_mut(), lufs.as_mut(), voice.as_mut()) else { continue };
 
@@ -328,6 +332,9 @@ fn analysis_loop(shared: Arc<Shared>) {
             if let Some(wh) = shared.wave.lock().as_mut() {
                 wh.push(&chunk);
             }
+            if let Some(p) = shared.punch.lock().as_mut() {
+                p.feed(&chunk);
+            }
             shared.tagger.lock().feed(&chunk, sr);
             shared.subtitle.lock().feed(&chunk, sr);
         }
@@ -354,6 +361,10 @@ fn analysis_loop(shared: Arc<Shared>) {
             f.f3 = last_voice.f3;
             f.voiced = last_voice.voiced;
             f.envelope.copy_from_slice(&voice.envelope);
+            if let Some(p) = shared.punch.lock().as_ref() {
+                f.punch_m = p.stats.momentary;
+                f.tsr = p.stats.tsr;
+            }
             f.rec_seconds = match rec.as_ref() {
                 Some(r) => {
                     let s = r.seconds();

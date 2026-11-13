@@ -39,6 +39,10 @@ export interface Frame {
   flatness: number;
   /** Spectral centroid in Hz. */
   centroid: number;
+  /** Momentary perceptual punch (280 ms weighted transient energy), dB; see punch.rs. */
+  punchM: number;
+  /** Transient-to-steady-state ratio, dB. */
+  tsr: number;
   specL: Float32Array;
   specR: Float32Array;
   scopeL: Float32Array;
@@ -89,6 +93,8 @@ export function parseFrame(buf: ArrayBuffer): Frame | null {
     recSeconds: v[27],
     flatness: v[28],
     centroid: v[29],
+    punchM: v[30],
+    tsr: v[31],
     specL: take(N_SPEC),
     specR: take(N_SPEC),
     scopeL: take(N_SCOPE),
@@ -105,7 +111,7 @@ export function emptyFrame(): Frame {
     peak: [SILENCE_DB, SILENCE_DB], rms: [SILENCE_DB, SILENCE_DB], truePeak: [SILENCE_DB, SILENCE_DB],
     correlation: 0, lufsM: SILENCE_DB, lufsS: SILENCE_DB, lufsI: SILENCE_DB, lra: 0,
     maxTP: SILENCE_DB, maxM: SILENCE_DB, maxS: SILENCE_DB,
-    f0: 0, f1: 0, f2: 0, f3: 0, voiced: 0, recSeconds: -1, flatness: 0, centroid: 0,
+    f0: 0, f1: 0, f2: 0, f3: 0, voiced: 0, recSeconds: -1, flatness: 0, centroid: 0, punchM: SILENCE_DB, tsr: 0,
     specL: new Float32Array(N_SPEC).fill(SILENCE_DB), specR: new Float32Array(N_SPEC).fill(SILENCE_DB),
     scopeL: new Float32Array(N_SCOPE), scopeR: new Float32Array(N_SCOPE), lissa: new Float32Array(2 * N_LISSA),
     envelope: new Float32Array(N_ENV).fill(SILENCE_DB),

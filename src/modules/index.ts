@@ -16,6 +16,7 @@ import { PlayerModule } from "./player";
 import { VariationMapModule } from "./variationmap";
 import { SubtitlesModule } from "./subtitles";
 import { EmojiModule } from "./emoji";
+import { PunchModule } from "./punch";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -37,6 +38,7 @@ export const MODULES: Record<string, ModuleFactory> = {
   variation: () => new VariationMapModule(),
   subtitles: () => new SubtitlesModule(),
   emoji: () => new EmojiModule(),
+  punch: () => new PunchModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -57,6 +59,7 @@ export const MODULE_TITLES: Record<string, string> = {
   variation: "Variation Map (베리에이션 · 반복 감지)",
   subtitles: "Subtitles (자막 · whisper)",
   emoji: "Emoji (도트 · 재미용)",
+  punch: "Punch (타격감 · 화려함)",
 };
 
 /** Minimum tile size in grid cells per layout kind. */

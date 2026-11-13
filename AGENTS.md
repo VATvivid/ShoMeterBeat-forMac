@@ -34,6 +34,8 @@ src/windows.ts                  별도 창 목록(rm.popwins.v1)·생성/복원/
 src-tauri/src/lib.rs            창 명령: set_opacity(WS_EX_LAYERED), drag_hover/drag_drop(WindowFromPoint로 포인터 아래 창 찾기 → 이벤트), to_screen, 클립 폴더, 메인 창 닫히면 종료
 src/modules/emoji.ts            도트 스프라이트(문자열 → 테마 토큰), 규칙 판별(frame 값만) / AI 판별(YAMNet 태그 → 스프라이트 표)
 src/modules/aitags.ts           YAMNet 태그 그룹 + requestTagging(여러 모듈이 같이 켜고 끄는 공유 스위치)
+src-tauri/src/audio/punch.rs    Fenton-Lee punch 미터: HPSS(미디언) 트랜지언트 → 수정 K-가중 → 옥타브 회귀 가중 → 280 ms 블록 dB; 온셋→히트(어택·프로파일·화려함), PM95 히스토그램. 프레임 헤더 30/31 = momentary punch / TSR
+src/modules/punch.ts            Punch 모듈 UI: 라이브 바 · 마지막 히트 옥타브 프로파일 · 히트 이력(클릭 = 기준) · 세션 PM95/평균
 ```
 밸리스틱(릴리스, 피크 홀드, 스무딩)은 전부 프론트에서 한다. Rust는 순간값만 보낸다.
 

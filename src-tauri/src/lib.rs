@@ -289,6 +289,25 @@ fn set_onset_k(engine: State<Engine>, k: f32) {
     }
 }
 
+// ---- punch meter (Punch module) --------------------------------------------------
+
+#[tauri::command]
+fn punch_hits_since(engine: State<Engine>, after: f64) -> Vec<audio::punch::Hit> {
+    engine.0.punch.lock().as_ref().map(|p| p.hits_since(after.max(0.0) as u64)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn punch_status(engine: State<Engine>) -> audio::punch::PunchStats {
+    engine.0.punch.lock().as_ref().map(|p| p.stats.clone()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn punch_reset(engine: State<Engine>) {
+    if let Some(p) = engine.0.punch.lock().as_mut() {
+        p.reset();
+    }
+}
+
 // ---- text files (preset export / import) ----------------------------------------
 
 #[tauri::command]
@@ -523,6 +542,7 @@ pub fn run() {
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
             events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status,
+            punch_hits_since, punch_status, punch_reset,
             set_opacity, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])
         .run(tauri::generate_context!())
