@@ -5,7 +5,7 @@ const calls = new Set();
 const ctxProxy = () => new Proxy({}, {
   get: (_, k) => {
     if (k === "measureText") return () => ({ width: 10 });
-    if (k === "createLinearGradient") return () => ({ addColorStop() {} });
+    if (k === "createLinearGradient" || k === "createRadialGradient") return () => ({ addColorStop() {} });
     return typeof k === "string" ? (() => { calls.add(k); }) : undefined;
   },
   set: () => true,

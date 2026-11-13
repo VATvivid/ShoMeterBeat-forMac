@@ -31,8 +31,23 @@ const IDX_LO = -45, IDX_HI = -10, IDX_GAMMA = 2;   // 강도 dB → 0…100
 const DB_TOP = -8, DB_BOT = -42;                    // history bar scale in dB mode
 const BAND_TOP = 0, BAND_BOT = -60;
 const OCT_LABELS = ["63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
-const JAB_WIND = 0.12, JAB_HIT = 0.3; // punch motion phases (share of the jab)
-const POLL_MS = 150;
+/** 화려함 tiers → colours. < 30: nothing (plain glove). 30–60: one warm colour. 60–85: four
+ *  theme colours. ≥ 85: a rainbow that rotates with the clock. */
+function hslHex(h: number, s: number, l: number): string {
+  const k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return "#" + [f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
+}
+function flashPalette(g: number, clock: number): string[] {
+  if (g < 0.3) return [];
+  if (g < 0.6) return [theme("target")];
+  if (g < 0.85) return [theme("target"), theme("peak"), theme("sig"), theme("sig-2")];
+  const h0 = (clock * 90) % 360;
+  return [0, 1, 2, 3, 4, 5].map((i) => hslHex((h0 + i * 60) % 360, 0.9, 0.6));
+}
+const JAB_WIND = 0.06, JAB_HIT = 0.16, JAB_HOLD = 0.36; // punch motion phases (share of the jab): contact ~50–100 ms after the trigger, then the fist stays on the target until JAB_HOLD
+const PRE_EDGE_DB = 8;                 // punchM rise over its slow average that fires the glove early
+const POLL_MS = 100;
 const HOLD_S = 2.5;
 const SEGMENTS = 32;
 const RANKS: [number, string, string][] = [[30, "WEAK", "약함"], [55, "GOOD", "보통"], [75, "STRONG", "강함"], [90, "POWERFUL", "아주 강함"], [101, "KO!", "최강"]];
@@ -88,6 +103,11 @@ export class PunchModule implements Module {
   private shakeT = 0;           // tile shake time left (s)
   private shakeDur = 0;
   private scorePop = 0;         // 1 → 0 digit pop after a hit
+  private liveSlow = -120;      // slow punchM average for the early-trigger edge
+  private fist = { x: 0, y: 0, size: 0 }; // contact point of the current punch (burst + sparks are anchored here)
+  private contactSet = false;             // fist frozen at the moment of contact (later 강도 updates must not move it)
+  private sparks: { x: number; y: number; vx: number; vy: number; life: number; max: number; col: string; w: number; h: number; rot: number; vr: number }[] = [];
+  private preAt = -10;          // clock of the last early trigger (refractory + match window)
   // punching machine
   private tower = 0;            // lit fraction 0…1 (rises fast, holds, falls)
   private towerTarget = 0;
@@ -209,6 +229,18 @@ export class PunchModule implements Module {
   private animate(dt: number, f: Frame) {
     const target = f.punchM;
     this.live = ballistic(this.live, target, dt, 40);
+    // Early trigger: the hit event comes through polling (≤ 100 ms) after the engine has
+    // measured the attack, which reads as a beat late. The per-frame punchM jumps the moment
+    // the transient starts, so a rise of PRE_EDGE_DB over its slow average fires the punch
+    // right away with a provisional 강도; the real hit (below) only re-scales it.
+    const edge = target > this.liveSlow + PRE_EDGE_DB && target > IDX_LO && this.clock - this.preAt > 0.15;
+    this.liveSlow += (target - this.liveSlow) * Math.min(1, dt * 3);
+    if (edge && this.jab < 0.6) {
+      this.preAt = this.clock;
+      this.hitPow = Math.max(0.15, this.index(target) / 100);
+      this.jab = 1;
+      this.contactSet = false;
+    }
     if (target >= this.liveHold) { this.liveHold = target; this.holdAge = 0; }
     else { this.holdAge += dt; if (this.holdAge > HOLD_S) this.liveHold = ballistic(this.liveHold, target, dt, 20); }
     this.flashAnim = Math.max(0, this.flashAnim - dt * 2);
@@ -216,6 +248,8 @@ export class PunchModule implements Module {
     this.jab = Math.max(0, this.jab - dt * (3.2 - 1.6 * this.hitPow)); // weak ~0.3 s, strong ~0.6 s
     this.shakeT = Math.max(0, this.shakeT - dt);
     this.scorePop = Math.max(0, this.scorePop - dt * 4);
+    for (const q of this.sparks) { q.life += dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 240 * dt; q.vx *= 1 - 1.5 * dt; q.rot += q.vr * dt; }
+    this.sparks = this.sparks.filter((q) => q.life < q.max);
     const last = this.hits[this.hits.length - 1] ?? null;
     {
       const ts = last ? this.rel(this.index(this.strengthDb(last))) : 0, tg = last ? last.flash / 100 : 0;
@@ -230,7 +264,19 @@ export class PunchModule implements Module {
       // punch motion + impact: wind-up, thrust, contact burst, tile shake and digit pop,
       // all scaled by the hit's 강도 (a weak tap barely nudges, a KO hit rocks the tile)
       this.hitPow = idx / 100;
-      this.jab = 1;
+      // 화려함 → sparks (from 55) and confetti (from 80) flying out of the fist
+      const fl = last.flash / 100;
+      const pal = flashPalette(fl, this.clock);
+      const n = fl < 0.55 ? 0 : Math.round(8 + 28 * fl), nc = fl >= 0.8 ? 12 : 0;
+      const sp = Math.max(30, this.fist.size) / 60;
+      for (let i = 0; i < n + nc; i++) {
+        const a = Math.random() * Math.PI * 2, v = (40 + 140 * Math.random()) * (0.5 + sp) * (0.6 + 0.6 * fl);
+        const confetti = i >= n;
+        this.sparks.push({ x: this.fist.x, y: this.fist.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 40 * sp, life: 0, max: confetti ? 0.9 + Math.random() * 0.5 : 0.45 + Math.random() * 0.4, col: pal[Math.floor(Math.random() * pal.length)] ?? theme("target"), w: confetti ? 3 + 3 * sp : 1.5 + sp, h: confetti ? 5 + 4 * sp : 1.5 + sp, rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 12 });
+      }
+      while (this.sparks.length > 160) this.sparks.shift();
+      // a punch fired early for this hit is already in flight: keep its phase, just re-scale
+      if (!(this.clock - this.preAt < 0.45 && this.jab > 0)) { this.jab = 1; this.contactSet = false; }
       this.scorePop = 1;
       this.shakeDur = 0.15 + 0.35 * this.hitPow;
       this.shakeT = this.shakeDur;
@@ -461,15 +507,29 @@ export class PunchModule implements Module {
       const t = 1 - this.jab;
       if (t < JAB_WIND) { const u = t / JAB_WIND; dx = side * 0.12 * pw * Math.sin(u * Math.PI / 2); sx = 1 - 0.1 * pw * u; sy = 1 + 0.06 * pw * u; }
       else if (t < JAB_HIT) { const u = (t - JAB_WIND) / (JAB_HIT - JAB_WIND); const e = 1 - Math.pow(1 - u, 3); dx = side * 0.12 * pw - e * (reach + side * 0.12 * pw); sx = 1 + 0.35 * pw * Math.sin(u * Math.PI); sy = 1 - 0.15 * pw * Math.sin(u * Math.PI); }
-      else { const u = (t - JAB_HIT) / (1 - JAB_HIT); dx = -reach * Math.exp(-4 * u) * Math.cos(u * Math.PI * 2.5); const wob = 0.2 * pw * Math.exp(-5 * u) * Math.sin(u * Math.PI * 3); sx = 1 - wob; sy = 1 + wob * 0.7; }
+      else if (t < JAB_HOLD) { const u = (t - JAB_HIT) / (JAB_HOLD - JAB_HIT); dx = -reach; const sq = (1 - u) * 0.18 * pw; sx = 1 - sq; sy = 1 + sq * 0.7; } // fist stays on the target, impact squash easing out
+      else { const u = (t - JAB_HOLD) / (1 - JAB_HOLD); dx = -reach * Math.exp(-3.5 * u) * Math.cos(u * Math.PI * 1.2); const wob = 0.12 * pw * Math.exp(-5 * u) * Math.sin(u * Math.PI * 3); sx = 1 - wob; sy = 1 + wob * 0.7; }
     }
     const k = this.impactK();
+    const pal = flashPalette(g, this.clock);
+    // anchor: predicted contact point until the fist lands, then frozen there for the rest of the punch
+    if (!this.contactSet) {
+      this.fist = { x: cx - reach - size * 0.5, y: cy, size };
+      if (this.jab > 0 && 1 - this.jab >= JAB_HIT) this.contactSet = true;
+    }
     ctx.save();
     ctx.globalAlpha = hasHit ? 1 : 0.35;
+    // sparks / confetti from the last hit (tile coordinates, drawn under the glove)
+    for (const q of this.sparks) {
+      const u = q.life / q.max, a = u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85;
+      ctx.fillStyle = withAlpha(q.col, a);
+      ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.rot); ctx.fillRect(-q.w / 2, -q.h / 2, q.w, q.h); ctx.restore();
+    }
     if (k > 0) {
       // contact burst at the fist: flash, shockwave ring (a second red one past 70), impact lines
+      // — coloured from the 화려함 palette when there is one
       const q = 1 - k;
-      const fx = cx - reach - size * 0.45, fy = cy;
+      const fx = this.fist.x, fy = cy;
       ctx.fillStyle = withAlpha(theme("target"), (0.15 + 0.5 * pw) * k);
       ctx.beginPath(); ctx.arc(fx, fy, size * (0.25 + 0.55 * pw) * (0.6 + 0.4 * q), 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = withAlpha(theme("peak"), (0.5 + 0.5 * pw) * k); ctx.lineWidth = Math.max(1, size * (0.03 + 0.1 * pw) * k);
@@ -479,8 +539,9 @@ export class PunchModule implements Module {
         ctx.beginPath(); ctx.arc(fx, fy, size * (0.2 + q * (1.5 + 3 * pw)), 0, Math.PI * 2); ctx.stroke();
       }
       const n = pw < 0.3 ? 6 : pw < 0.7 ? 10 : 14, r0 = size * (0.3 + 0.5 * q * pw), len = size * (0.15 + 1.3 * pw) * (0.4 + 0.6 * k);
-      ctx.strokeStyle = withAlpha(theme("fg-0"), (0.4 + 0.6 * pw) * k); ctx.lineWidth = Math.max(1, size * (0.015 + 0.035 * pw));
+      ctx.lineWidth = Math.max(1, size * (0.015 + 0.035 * pw));
       for (let i = 0; i < n; i++) {
+        ctx.strokeStyle = withAlpha(pal.length >= 4 ? pal[i % pal.length] : theme("fg-0"), (0.4 + 0.6 * pw) * k);
         const a = (i / n) * Math.PI * 2 + (i % 2 ? 0.11 : 0);
         const l = len * (i % 3 === 0 ? 1 : 0.6);
         ctx.beginPath(); ctx.moveTo(fx + Math.cos(a) * r0, fy + Math.sin(a) * r0); ctx.lineTo(fx + Math.cos(a) * (r0 + l), fy + Math.sin(a) * (r0 + l)); ctx.stroke();
@@ -502,21 +563,25 @@ export class PunchModule implements Module {
     }
     ctx.translate(cx + dx, cy);
     ctx.scale(sx, sy);
-    if (g > 0.03) {
+    if (pal.length) {
+      // 화려함 glow: one colour (30–60), four colours (60–85), rotating rainbow (85+); rays from 40,
+      // more of them and faster the higher the index
       const rad = size * (0.55 + 0.6 * g);
+      const c0 = pal[0], c1 = pal[1 % pal.length];
       const grad = ctx.createRadialGradient(0, 0, size * 0.2, 0, 0, rad);
-      grad.addColorStop(0, withAlpha(theme("target"), 0.15 + 0.55 * g));
-      grad.addColorStop(0.6, withAlpha(theme("peak"), 0.12 * g));
-      grad.addColorStop(1, withAlpha(theme("target"), 0));
+      grad.addColorStop(0, withAlpha(c0, 0.1 + 0.55 * g));
+      grad.addColorStop(0.6, withAlpha(c1, 0.15 * g));
+      grad.addColorStop(1, withAlpha(c0, 0));
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
-      if (g > 0.35) {
-        const n = 8, len = size * (0.3 + 0.5 * g), a0 = this.clock * 0.6;
-        ctx.strokeStyle = withAlpha(theme("target"), (g - 0.35) * 0.9);
+      if (g > 0.4) {
+        const n = g < 0.6 ? 6 : g < 0.85 ? 10 : 16, len = size * (0.3 + 0.6 * g), a0 = this.clock * (0.6 + 2.5 * (g - 0.4));
         ctx.lineWidth = Math.max(1, size / 32);
         for (let i = 0; i < n; i++) {
           const a = a0 + (i / n) * Math.PI * 2;
-          const r0 = size * 0.5, r1 = r0 + len * (0.7 + 0.3 * Math.sin(this.clock * 3 + i));
+          const tw = 0.7 + 0.3 * Math.sin(this.clock * (3 + 4 * g) + i * 1.7);
+          const r0 = size * 0.5, r1 = r0 + len * tw * (i % 2 ? 0.7 : 1);
+          ctx.strokeStyle = withAlpha(pal[i % pal.length], (g - 0.35) * 0.9 * tw);
           ctx.beginPath(); ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.stroke();
         }
       }
