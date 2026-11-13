@@ -80,7 +80,6 @@ export class VariationMapModule implements Module {
   private axesReady = false;
   private warn = { text: "", until: 0, ids: [] as number[] };
   private clock = 0;
-  private lastEventClock = 0;
   private sentK = -1;
   private dimW = new Float32Array(N_VIEW);
   private combo = 0;
@@ -143,7 +142,6 @@ export class VariationMapModule implements Module {
     this.updateCombo(ev);
     this.project();
     this.checkRepetition();
-    this.lastEventClock = this.clock;
   }
 
   /** Re-weights and re-clusters the window after a weight change. */
