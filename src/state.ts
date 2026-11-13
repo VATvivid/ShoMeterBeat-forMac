@@ -51,7 +51,7 @@ export interface Settings {
   /** Main window always-on-top (independent of dock mode, which forces it). */
   alwaysOnTop: boolean;
   /** Edit-mode drop behaviour: swap with the one tile under the drop (default) or push everything aside. */
-  layoutMode: "free" | "swap" | "push";
+  layoutMode: "free" | "swap";
   /** 투명도 slider target: only the backgrounds (window stays sharp) or the whole window (WS_EX_LAYERED alpha). */
   opacityMode: "bg" | "window";
   /** Per-module free-form settings, keyed by module id. */

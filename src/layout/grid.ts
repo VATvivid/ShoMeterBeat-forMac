@@ -1,7 +1,7 @@
 // Tile grid: absolute-positioned tiles snapped to a cols×rows grid (dimensions depend
 // on the layout kind: free grid, horizontal strip, vertical strip). In edit mode the
 // header drags (move) and the bottom-right handle resizes. Overlapping tiles are
-// swapped with the one tile under the drop (default) or pushed out of the way; the grid
+// free to overlap (default) or swapped with the one tile under the drop; the grid
 // grows to contain every tile and, in edit mode, by the "+" buttons on its right / bottom
 // edge (the window stays, cells shrink). While dragging nothing moves — dashed guides
 // show where affected tiles will land; they glide there on drop.
@@ -310,7 +310,7 @@ export class Grid {
     const extra = this.extraMenu?.(id) ?? [];
     showContextMenu(x, y, module.title, items, [
       { label: this.editing ? "레이아웃 편집 끝내기" : "레이아웃 편집", onClick: () => this.onToggleEdit?.() },
-      { label: `배치 방식: ${({ free: "겹침 허용", swap: "자리 바꾸기", push: "밀어내기" } as const)[settings.layoutMode] ?? "겹침 허용"} ✓ (클릭해 바꾸기)`, onClick: () => { settings.layoutMode = settings.layoutMode === "free" ? "swap" : settings.layoutMode === "swap" ? "push" : "free"; saveSettings(); } },
+      { label: settings.layoutMode === "swap" ? "배치 방식: 자리 바꾸기 ✓ (→ 겹침 허용)" : "배치 방식: 겹침 허용 ✓ (→ 자리 바꾸기)", onClick: () => { settings.layoutMode = settings.layoutMode === "swap" ? "free" : "swap"; saveSettings(); } },
       ...extra,
       { label: "모듈 끄기", danger: true, onClick: () => this.remove(id) },
     ]);
@@ -443,12 +443,14 @@ export class Grid {
           return;
         }
         if (outside) { outside = false; this.ghost.style.display = "block"; this.onXDrag?.leave(); }
-        const lm = settings.layoutMode;
+        // move: free (default) → the tile goes where it is dropped, overlapping allowed, nothing else moves;
+        //       swap → exchange with the one tile under it (null = not allowed → red ghost, snap back).
+        // resize always just resizes (overlap allowed). resolvePush is only used when a module is added.
+        const lm = settings.layoutMode === "swap" ? "swap" : "free";
         const swap = mode === "move" && lm === "swap" ? resolveSwap(this.layout, t.id, next, start, this.kind) : null;
         valid = !(mode === "move" && lm === "swap" && swap === null);
         this.ghost.classList.toggle("invalid", !valid);
-        // free: the tile simply goes where it is dropped — overlapping is allowed, nothing else moves
-        const resolved = lm === "free" ? { [t.id]: { ...next } } : swap ?? (valid ? resolvePush(this.layout, t.id, next, this.kind) : { [t.id]: { ...next } });
+        const resolved = swap ?? { [t.id]: { ...next } };
         const g = this.rectPx(next);
         Object.assign(this.ghost.style, { left: `${g.left}px`, top: `${g.top}px`, width: `${g.width}px`, height: `${g.height}px` });
         this.showGuides(resolved, t.id);
