@@ -241,7 +241,7 @@ export class PunchModule implements Module {
     this.liveSlow += (target - this.liveSlow) * Math.min(1, dt * 3);
     if (edge) {
       this.preAt = this.clock;
-      this.hitPow = Math.max(0.15, this.index(target) / 100);
+      this.hitPow = Math.max(0.15, this.index(target) / 100, this.hitPow * 0.85); // punchM is still filling its block: lean on the last hit's 강도
       this.jab = 1;
       this.contactSet = false;
     }
@@ -250,6 +250,9 @@ export class PunchModule implements Module {
     this.flashAnim = Math.max(0, this.flashAnim - dt * 2);
     this.clock += dt;
     this.jab = Math.max(0, this.jab - dt * (3.2 - 1.6 * this.hitPow)); // weak ~0.3 s, strong ~0.6 s
+    // an early-fired punch waits on the target (end of the hold phase) for its engine hit, up to 0.7 s,
+    // so the real 강도 lands where the fist already is instead of after the glove has come back
+    if (this.preAt > this.lastHitAt && this.clock - this.preAt < 0.7 && this.jab > 0 && 1 - this.jab > JAB_HOLD - 0.02) this.jab = 1 - (JAB_HOLD - 0.02);
     this.shakeT = Math.max(0, this.shakeT - dt);
     this.scorePop = Math.max(0, this.scorePop - dt * 4);
     for (const q of this.sparks) { q.life += dt; q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 240 * dt; q.vx *= 1 - 1.5 * dt; q.rot += q.vr * dt; }
@@ -286,6 +289,7 @@ export class PunchModule implements Module {
       while (this.sparks.length > 160) this.sparks.shift();
       // swing only when nothing already represents this sound (no early trigger, no punch in flight)
       if (newSound && !ownsSwing) { this.jab = 1; this.contactSet = false; }
+      else if (newSound && this.jab > 0 && 1 - this.jab >= JAB_HIT && 1 - this.jab < JAB_HOLD) { this.jab = 1 - JAB_HIT; this.contactSet = false; } // fist already on the target: land the real hit there (burst restarts at the real 강도)
       this.scorePop = 1;
       if (newSound) { this.shakeDur = 0.15 + 0.35 * this.hitPow; this.shakeT = this.shakeDur; }
       this.towerTarget = idx / 100;
@@ -354,7 +358,7 @@ export class PunchModule implements Module {
     // ---- score panel
     // glove sits between the tower (+ rank words) and the score panel and punches to the right
     const gloveW = this.showGlove && !narrow ? Math.max(40, Math.min(120, Math.min(y1 - y0, w * 0.22))) : 0;
-    const px0 = x0 + towerW + (narrow ? 10 : 58) + (gloveW ? gloveW + 8 : 0);
+    const px0 = x0 + towerW + (narrow ? 10 : 58) + (gloveW ? Math.round(gloveW * 1.45) + 8 : 0); // room for the thrust so the fist lands in the gap, not on the digits
     const px1 = w - PAD;
     const pw = px1 - px0;
     if (pw < 40) return;
@@ -408,7 +412,7 @@ export class PunchModule implements Module {
       this.drawHistory(ctx, { x: px0, y: y + 4, w: pw, h: histH - 4 }, this.ref, true);
       this.histRect = { x: px0, y: y + 4, w: pw, h: histH - 4 };
     } else { this.histRect = { x: 0, y: 0, w: 0, h: 0 }; this.histBarW = 0; }
-    if (gloveW) this.drawGlove(ctx, px0 - 8 - gloveW / 2, y0 + Math.min(y1 - y0, gloveW) / 2 + 8, Math.min(gloveW, y1 - y0), !!last);
+    if (gloveW) this.drawGlove(ctx, px0 - 8 - Math.round(gloveW * 1.45) + gloveW / 2, y0 + Math.min(y1 - y0, gloveW) / 2 + 8, Math.min(gloveW, y1 - y0), !!last);
     if (!inTauri && this.hits.length === 0) {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "left"; ctx.textBaseline = "bottom";
       ctx.fillText("브라우저 미리보기", px0, y1);
@@ -471,7 +475,7 @@ export class PunchModule implements Module {
     const gloveW = this.showGlove && !tiny ? Math.max(40, Math.min(110, Math.min(ph, w * 0.22))) : 0;
     const profW = narrow ? 0 : Math.min(170, Math.max(80, (w - 2 * PAD - liveW - gloveW) * 0.34));
     const gap = 10;
-    let x = PAD + (gloveW ? gloveW + gap : 0); // glove first (left), punching right into the meters
+    let x = PAD + (gloveW ? Math.round(gloveW * 1.45) + gap : 0); // glove first (left) with room for the thrust, punching right towards the meters
     if (liveW) {
       ctx.fillStyle = theme("bg-3"); ctx.fillRect(x, y, liveW, ph);
       const yv = yOfDb(this.live, y, ph);
