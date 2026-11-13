@@ -47,6 +47,18 @@ GROUP[69] = 0; // zcr
 const GROUP_N = [0, 0, 0];
 for (const g of GROUP) GROUP_N[g]++;
 
+/** Floor for each dimension's standard deviation, in the dimension's own unit. Standardising
+ *  over the window alone would stretch a set of near-identical sounds to unit variance in
+ *  every dimension (so nothing could ever cluster); with the floors, two takes of the same
+ *  sound stay within a few units while different sounds sit ten or more apart. */
+const STD_FLOOR = new Float32Array(N_VIEW);
+for (let i = 0; i < 60; i++) STD_FLOOR[i] = 3;          // band means / shape: 3 dB
+STD_FLOOR[60] = 0.25; STD_FLOOR[61] = 0.25; STD_FLOOR[62] = 0.25; // centroid / bandwidth / roll-off (log2 Hz, oct)
+STD_FLOOR[63] = 0.05;                                   // flatness
+STD_FLOOR[64] = 8; STD_FLOOR[65] = 20; STD_FLOOR[66] = 40; // attack / decay / length (ms)
+STD_FLOOR[67] = 2; STD_FLOOR[68] = 2;                   // crest / peak (dB)
+STD_FLOOR[69] = 0.5;                                    // zero-crossing rate (/ms)
+
 /** 58-d engine features → 70-d view (band means, shape deviations, descriptors). */
 function toView(f: number[]): Float32Array {
   const v = new Float32Array(N_VIEW);
@@ -164,7 +176,7 @@ export class VariationMapModule implements Module {
     const mean = new Float32Array(N_VIEW), std = new Float32Array(N_VIEW);
     for (const e of this.events) for (let i = 0; i < N_VIEW; i++) mean[i] += e.v[i] / n;
     for (const e of this.events) for (let i = 0; i < N_VIEW; i++) std[i] += (e.v[i] - mean[i]) ** 2 / n;
-    for (let i = 0; i < N_VIEW; i++) std[i] = Math.sqrt(std[i]) || 1;
+    for (let i = 0; i < N_VIEW; i++) std[i] = Math.max(STD_FLOOR[i], Math.sqrt(std[i]) || 0);
     for (let i = 0; i < N_VIEW; i++) this.dimW[i] = Math.sqrt(this.groupW(GROUP[i]) * (N_VIEW / 3) / GROUP_N[GROUP[i]]);
     for (const e of this.events) for (let i = 0; i < N_VIEW; i++) e.z[i] = ((e.v[i] - mean[i]) / std[i]) * this.dimW[i];
   }
