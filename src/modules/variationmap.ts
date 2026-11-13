@@ -22,6 +22,12 @@ import { modSetting, setModSetting } from "../state";
 // Each group gets the same total weight by default (sliders 0…2 in the menu). The
 // novelty strip under the map shows, per hit, how far it is from the previous hit of
 // the same cluster (as a share of the cluster radius) and which group changed most.
+//
+// Combo: consecutive hits of the same cluster that each differ from the previous one
+// (beyond the 동일 distance) build a combo counter — the way a fighting game rewards a
+// chain — with a burst at the new dot and a counter that grows and changes colour. A
+// repeat (same cluster, within the 동일 distance) breaks the combo with a red REPEAT
+// flash; a different sound (new cluster) starts a fresh chain.
 
 const N_DIM = 58;
 const N_VIEW = 70; // 12 band means + 48 shape + 4 spectral + zcr + 3 envelope + 2 level
@@ -77,6 +83,12 @@ export class VariationMapModule implements Module {
   private lastEventClock = 0;
   private sentK = -1;
   private dimW = new Float32Array(N_VIEW);
+  private combo = 0;
+  private comboBest = 0;
+  private comboCluster = 0;
+  private comboBump = 0;      // 1 right after an increment → 0
+  private comboBreak = 0;     // 1 right after a repeat → 0
+  private burst = 0;          // burst ring at the newest dot
 
   private get windowN() { return modSetting(this.id, "window", 200); }
   private get radius() { return modSetting(this.id, "radius", 4.5); }
@@ -95,7 +107,7 @@ export class VariationMapModule implements Module {
       { type: "range", label: "반복 판정 (연속 횟수)", value: this.repeatN, min: 2, max: 8, step: 1, format: (v) => `${v}회`, onChange: (v) => setModSetting(this.id, "repeat", v) },
       { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 5, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
       { type: "range", label: "온셋 감도 (σ)", value: this.onsetK, min: 1, max: 6, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "onsetK", v) },
-      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; } },
+      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; } },
     ];
   }
 
@@ -103,7 +115,8 @@ export class VariationMapModule implements Module {
     const live = this.events.filter((e) => this.clock - e.t < 10).length;
     const last = this.events[this.events.length - 1];
     const nov = last && this.events.length > 1 ? `  ·  Δ${Math.round(last.nov * 100)}% ${GROUP_NAMES[last.novG]}` : "";
-    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${nov}${this.warn.until > this.clock ? "  ⚠ 반복" : ""}`;
+    const combo = this.combo >= 2 ? `  ·  콤보 ×${this.combo}` : "";
+    return `${this.events.length}개 · 군집 ${this.clusters.length} · 최근10s ${live}${nov}${combo}${this.warn.until > this.clock ? "  ⚠ 반복" : ""}`;
   }
 
   private poll() {
@@ -127,6 +140,7 @@ export class VariationMapModule implements Module {
     this.updateAxes();
     this.assignCluster(ev);
     this.novelty(ev);
+    this.updateCombo(ev);
     this.project();
     this.checkRepetition();
     this.lastEventClock = this.clock;
@@ -241,6 +255,24 @@ export class VariationMapModule implements Module {
     ev.novG = gd.indexOf(Math.max(...gd));
   }
 
+  /** Combo bookkeeping for the newest event (see the module comment). */
+  private updateCombo(ev: Ev) {
+    const repeat = !ev.novNew && ev.novD <= this.similar;
+    if (repeat) {
+      if (this.combo > 0) this.comboBreak = 1;
+      this.combo = 0;
+    } else if (ev.cluster === this.comboCluster && !ev.novNew) {
+      this.combo++;
+      this.comboBump = 1;
+    } else {
+      this.combo = 1;
+      this.comboBump = 0.5;
+    }
+    this.comboCluster = ev.cluster;
+    this.comboBest = Math.max(this.comboBest, this.combo);
+    this.burst = 1;
+  }
+
   private checkRepetition() {
     const k = this.repeatN;
     if (this.events.length < k) return;
@@ -259,6 +291,9 @@ export class VariationMapModule implements Module {
     const { ctx, w, h, dt } = d;
     this.clock += dt;
     this.poll();
+    this.comboBump = Math.max(0, this.comboBump - dt * 3);
+    this.comboBreak = Math.max(0, this.comboBreak - dt * 1.6);
+    this.burst = Math.max(0, this.burst - dt * 1.8);
     const listW = w > 320 ? 118 : 0;
     const stripH = this.showNovelty && h > 170 ? 46 : 0;
     const x0 = 10, x1 = w - listW - 8, y0 = 10, y1 = h - 10 - stripH;
@@ -291,8 +326,10 @@ export class VariationMapModule implements Module {
       const r = Math.max(8, c.spread * scale * 1.4);
       ctx.strokeStyle = withAlpha(colorOf(c.id), 0.35); ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-      ctx.fillStyle = withAlpha(colorOf(c.id), 0.9); ctx.font = font(10, 600); ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-      ctx.fillText(`C${c.id}`, p.x, p.y - r - 2);
+      if (c.n >= 2 || this.clock - c.lastT < 10) {
+        ctx.fillStyle = withAlpha(colorOf(c.id), 0.9); ctx.font = font(10, 600); ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+        ctx.fillText(`C${c.id}`, p.x, p.y - r - 2);
+      }
     }
     // trail through the last 6 events
     const tail = evs.slice(-6);
@@ -306,15 +343,47 @@ export class VariationMapModule implements Module {
     for (const e of evs) {
       const p = px(e);
       const age = Math.max(0, this.clock - e.t);
-      const alpha = Math.max(0.15, 1 - age / 60);
+      const alpha = age > 30 ? 0.18 : Math.max(0.3, 1 - age / 40);
       ctx.fillStyle = withAlpha(colorOf(e.cluster), alpha);
-      const r = warnSet.has(e.seq) ? 5 : 3.5;
+      const r = warnSet.has(e.seq) ? 5 : age > 30 ? 2 : 3.5;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
       if (warnSet.has(e.seq)) { ctx.strokeStyle = theme("clip"); ctx.lineWidth = 1.5; ctx.stroke(); ctx.lineWidth = 1; }
     }
     // newest event highlight
     const last = evs[evs.length - 1];
-    { const p = px(last); const t = Math.max(0, 1 - (this.clock - this.lastEventClock) / 0.6); if (t > 0) { ctx.strokeStyle = withAlpha(theme("fg-0"), t); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 6 + 10 * (1 - t), 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1; } }
+    {
+      const p = px(last);
+      if (this.burst > 0) {
+        const k = this.burst, prog = 1 - k;
+        const col = this.combo >= 10 ? theme("target") : this.combo >= 5 ? theme("peak") : this.combo >= 2 ? theme("sig") : theme("fg-0");
+        const grow = 8 + 18 * prog + Math.min(30, this.combo * 2);
+        ctx.strokeStyle = withAlpha(col, k); ctx.lineWidth = 1.5 + Math.min(3, this.combo * 0.3);
+        ctx.beginPath(); ctx.arc(p.x, p.y, grow, 0, Math.PI * 2); ctx.stroke();
+        if (this.combo >= 2) {
+          const n = 8;
+          for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + prog; const r0 = grow + 2, r1 = grow + 4 + 10 * k; ctx.beginPath(); ctx.moveTo(p.x + Math.cos(a) * r0, p.y + Math.sin(a) * r0); ctx.lineTo(p.x + Math.cos(a) * r1, p.y + Math.sin(a) * r1); ctx.stroke(); }
+        }
+        ctx.lineWidth = 1;
+      }
+    }
+    // combo counter (top-right of the map)
+    if (this.combo >= 2 || this.comboBreak > 0) {
+      const tier = this.combo >= 10 ? theme("target") : this.combo >= 5 ? theme("peak") : theme("sig");
+      const size = Math.min(34, 14 + this.combo * 1.6) * (1 + 0.25 * this.comboBump);
+      const sx = this.comboBreak > 0 ? (Math.random() - 0.5) * 6 * this.comboBreak : 0;
+      ctx.textAlign = "right"; ctx.textBaseline = "top";
+      if (this.comboBreak > 0 && this.combo === 0) {
+        ctx.fillStyle = withAlpha(theme("clip"), Math.min(1, this.comboBreak * 1.5)); ctx.font = font(18, 700);
+        ctx.fillText("REPEAT ✕", x1 - 8 + sx, y0 + 6);
+        ctx.fillStyle = withAlpha(theme("fg-2"), this.comboBreak); ctx.font = font(10);
+        ctx.fillText(`콤보 끊김 · 최고 ×${this.comboBest}`, x1 - 8, y0 + 28);
+      } else if (this.combo >= 2) {
+        ctx.fillStyle = withAlpha(tier, 0.95); ctx.font = font(size, 800);
+        ctx.fillText(`×${this.combo}`, x1 - 8 + sx, y0 + 4);
+        ctx.fillStyle = theme("fg-1"); ctx.font = font(10, 600);
+        ctx.fillText(`VARIATION COMBO · C${this.comboCluster}${this.comboBest > this.combo ? ` · 최고 ×${this.comboBest}` : ""}`, x1 - 8, y0 + 6 + size);
+      }
+    }
 
     // warning banner
     if (this.warn.until > this.clock) {
