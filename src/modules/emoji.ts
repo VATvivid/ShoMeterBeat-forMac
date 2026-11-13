@@ -169,6 +169,8 @@ export class EmojiModule implements Module {
   private aiLabel = "";
   private aiScore = 0;
   private aiAt = -100;
+  private parts: { x: number; y: number; vx: number; vy: number; life: number; max: number; kind: "note" | "streak" | "star" | "dot"; s: number }[] = [];
+  private spawnAcc = 0;
 
   private get mode() { return modSetting<"rule" | "ai">(this.id, "mode", "rule"); }
   private get showLabel() { return modSetting(this.id, "label", true); }
@@ -273,6 +275,73 @@ export class EmojiModule implements Module {
     this.scene = { sprite: "face", mouth: "closed", label: "소리", anim: "idle" };
   }
 
+  /** Which continuous effect a scene gets: voice arcs, music notes, wind streaks, sparkle stars,
+   *  water drops, or a slow pulse ring for everything else (silence: nothing). */
+  private ambientKind(): "voice" | "music" | "wind" | "sparkle" | "drops" | "pulse" | "none" {
+    const s = this.scene;
+    if (s.mouth === "sleep") return "none";
+    if (s.sprite === "face") return s.mouth === "closed" ? "pulse" : "voice";
+    if (s.sprite === "note" || s.sprite === "drum" || s.sprite === "bell" || s.sprite === "bird") return "music";
+    if (s.sprite === "wind" || s.sprite === "car") return "wind";
+    if (s.sprite === "water") return "drops";
+    if (s.sprite === "sparkle" || s.sprite === "fire" || s.sprite === "bolt") return "sparkle";
+    return "pulse";
+  }
+
+  private drawAmbient(ctx: CanvasRenderingContext2D, w: number, hh: number, cx: number, cy: number, sz: number, p: number, lvl01: number, dt: number) {
+    const kind = this.ambientKind();
+    const t = this.clock;
+    if (kind !== "none" && lvl01 > 0.02) {
+      // halo: every audible scene breathes with the level
+      const col = kind === "voice" ? "sig" : kind === "music" ? "sig-2" : kind === "sparkle" ? "target" : kind === "wind" || kind === "drops" ? "fg-1" : "peak";
+      const r = sz * (0.55 + 0.25 * lvl01 + 0.04 * Math.sin(t * 4));
+      const grad = ctx.createRadialGradient(cx, cy, sz * 0.3, cx, cy, r);
+      grad.addColorStop(0, withAlpha(theme(col), 0.05 + 0.22 * lvl01));
+      grad.addColorStop(1, withAlpha(theme(col), 0));
+      ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    if (kind === "voice") {
+      // sound arcs leaving the mouth (right side), opening with the mouth and the level
+      const amp = Math.max(this.open, lvl01 * 0.6);
+      const mx = cx + sz * 0.42, my = cy + sz * 0.12;
+      ctx.lineWidth = Math.max(1, p * 0.35); ctx.lineCap = "round";
+      for (let i = 0; i < 3; i++) {
+        const ph = (t * 2.2 + i * 0.33) % 1;
+        ctx.strokeStyle = withAlpha(theme("sig"), (1 - ph) * (0.25 + 0.6 * amp));
+        ctx.beginPath(); ctx.arc(mx, my, sz * 0.25 + ph * sz * 0.5, -0.55 * (0.6 + amp), 0.55 * (0.6 + amp)); ctx.stroke();
+      }
+      ctx.lineCap = "butt";
+    } else if (kind === "pulse") {
+      // slow rings expanding from the sprite — the breathing of a steady sound
+      ctx.lineWidth = Math.max(1, p * 0.3);
+      for (let i = 0; i < 2; i++) {
+        const ph = (t * 0.7 + i * 0.5) % 1;
+        ctx.strokeStyle = withAlpha(theme("peak"), (1 - ph) * 0.35 * lvl01);
+        ctx.beginPath(); ctx.arc(cx, cy, sz * (0.5 + ph * 0.6), 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // particles: notes (music), streaks (wind), stars (sparkle), drops (water); spawn rate follows the level
+    const rate = kind === "music" ? 2 + 10 * lvl01 : kind === "wind" ? 6 + 24 * lvl01 : kind === "sparkle" ? 3 + 14 * lvl01 : kind === "drops" ? 4 + 14 * lvl01 : 0;
+    this.spawnAcc = Math.min(this.spawnAcc + rate * dt, 2);
+    const R = Math.random;
+    while (this.spawnAcc >= 1 && this.parts.length < 48) {
+      this.spawnAcc -= 1;
+      if (kind === "music") this.parts.push({ x: cx + (R() - 0.5) * sz * 1.2, y: cy + sz * 0.3, vx: (R() - 0.5) * p * 4, vy: -(p * 8 + p * 14 * lvl01), life: 0, max: 1 + R() * 0.8, kind: "note", s: p * (1.6 + R() * 1.2) });
+      else if (kind === "wind") this.parts.push({ x: -p * 4, y: R() * hh, vx: p * (14 + 40 * lvl01) * (0.6 + R() * 0.8), vy: 0, life: 0, max: 1.6, kind: "streak", s: p * (2 + R() * 5) });
+      else if (kind === "sparkle") this.parts.push({ x: cx + (R() - 0.5) * sz * 1.8, y: cy + (R() - 0.5) * sz * 1.6, vx: 0, vy: -p * 2, life: 0, max: 0.35 + R() * 0.45, kind: "star", s: p * (0.6 + R() * 1.1) });
+      else this.parts.push({ x: cx + (R() - 0.5) * sz * 1.8, y: cy - sz * 0.6, vx: 0, vy: p * (6 + 10 * lvl01), life: 0, max: 0.9, kind: "dot", s: p * 0.8 });
+    }
+    for (const q of this.parts) { q.life += dt; q.x += q.vx * dt; q.y += q.vy * dt; }
+    this.parts = this.parts.filter((q) => q.life < q.max && q.x < w + p * 8 && q.y < hh + p * 4);
+    for (const q of this.parts) {
+      const u = q.life / q.max, a = u < 0.2 ? u / 0.2 : 1 - (u - 0.2) / 0.8;
+      if (q.kind === "note") { ctx.fillStyle = withAlpha(theme("sig-2"), a); ctx.font = font(q.s, 700); ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(u < 0.5 ? "♪" : "♫", q.x + Math.sin(q.life * 5) * p, q.y); }
+      else if (q.kind === "streak") { ctx.strokeStyle = withAlpha(theme("fg-1"), a * 0.6); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(q.x, q.y); ctx.lineTo(q.x + q.s, q.y); ctx.stroke(); }
+      else if (q.kind === "star") { const s = q.s * (u < 0.5 ? u * 2 : 2 - u * 2); ctx.fillStyle = withAlpha(theme("target"), a); ctx.fillRect(q.x - s, q.y - s * 0.2, s * 2, s * 0.4); ctx.fillRect(q.x - s * 0.2, q.y - s, s * 0.4, s * 2); }
+      else { ctx.fillStyle = withAlpha(theme("sig"), a * 0.8); ctx.fillRect(q.x, q.y, q.s, q.s); }
+    }
+  }
+
   draw(d: DrawCtx, f: Frame) {
     const { ctx, w, h, dt } = d;
     this.clock += dt;
@@ -281,7 +350,7 @@ export class EmojiModule implements Module {
     this.shake = Math.max(0, this.shake - dt * 4);
     const labelH = this.showLabel ? 16 : 0;
     const p = Math.max(1, Math.floor(Math.min(w - 12, h - labelH - 10) / 17));
-    const size = (p * 16) * 0.8; // 2026-11-13: 20 % smaller (사용자)
+    const size = (p * 16) * 0.72; // 2026-11-13: 20 % smaller, then 10 % more (사용자)
     const cx = w / 2, baseY = (h - labelH) / 2;
     const lvl01 = Math.max(0, Math.min(1, (this.level + 60) / 60));
     // animation offsets
@@ -299,6 +368,8 @@ export class EmojiModule implements Module {
     const step = Math.max(6, p);
     for (let y = step / 2; y < h - labelH; y += step) for (let x = step / 2; x < w; x += step) ctx.fillRect(x - 0.5, y - 0.5, 1, 1);
 
+    // ambient effects (every audible scene, not only hits): breathing halo + per-scene particles
+    this.drawAmbient(ctx, w, h - labelH, cx + ox, baseY + oy, size, p, lvl01, dt);
     const sprite = S[this.scene.sprite];
     const overlay = this.scene.sprite === "face" ? faceOverlay(this.scene.mouth, this.open) : [];
     const sz = size * sc;

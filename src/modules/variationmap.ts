@@ -23,11 +23,13 @@ import { modSetting, setModSetting } from "../state";
 // novelty strip under the map shows, per hit, how far it is from the previous hit of
 // the same cluster (as a share of the cluster radius) and which group changed most.
 //
-// Combo: consecutive hits of the same cluster that each differ from the previous one
-// (beyond the 동일 distance) build a combo counter — the way a fighting game rewards a
-// chain — with a burst at the new dot and a counter that grows and changes colour. A
-// repeat (same cluster, within the 동일 distance) breaks the combo with a red REPEAT
-// flash; a different sound (new cluster) starts a fresh chain.
+// Combo: one chain, the way a fighting game counts — consecutive hits of the *same*
+// cluster that each differ from every earlier hit (beyond the 동일 distance) count up,
+// with a burst at the new dot and a counter that grows and changes colour. The chain
+// ends when a hit repeats (red REPEAT flash), when the sound switches to another cluster
+// (fresh ×1), or when no hit arrives within 콤보 유지 시간 (default 3 s; the counter shows
+// the remaining time as a shrinking bar and fades out). Chains are not kept per cluster,
+// so coming back to an old sound never resumes an old count.
 
 const N_DIM = 58;
 const N_VIEW = 70; // 12 band means + 48 shape + 4 spectral + zcr + 3 envelope + 2 level
@@ -97,7 +99,9 @@ export class VariationMapModule implements Module {
   private combo = 0;              // combo of the newest event's cluster (shown)
   private comboBest = 0;
   private comboCluster = 0;
-  private comboBy = new Map<number, number>(); // cluster id → current chain length
+  private comboLastAt = -1e9;     // clock of the hit that last extended the chain
+  private comboEnd = 0;           // 1 → 0 fade of the "combo over" note
+  private comboEndN = 0;
   private lastRepeatAt = -1e9;   // clock of the last exact repeat (header flag for 3 s)
   private comboBump = 0;      // 1 right after an increment → 0
   private comboBreak = 0;     // 1 right after a repeat → 0
@@ -106,6 +110,7 @@ export class VariationMapModule implements Module {
   private get windowN() { return modSetting(this.id, "window", 200); }
   private get radius() { return modSetting(this.id, "radius", 6); }
   private get repeatN() { return modSetting(this.id, "repeat", 3); }
+  private get comboHold() { return modSetting(this.id, "comboHold", 3); }
   /** 동일 distance: an asset replayed through loopback lands 2–4 units from its first play (frame
    *  jitter, room noise), different takes of one sound 2–9 — so 3.0 flags replays and only the
    *  most alike takes. Measured 2026-11-13 on game hit sounds. */
@@ -122,10 +127,11 @@ export class VariationMapModule implements Module {
       ...[0, 1, 2].map((g): SettingItem => ({ type: "range", label: `가중치 · ${GROUP_NAMES[g]}${g === 1 ? " (포락선)" : ""}`, value: this.groupW(g), min: 0, max: 2, step: 0.25, format: (v) => `×${v.toFixed(2)}`, onChange: (v) => { setModSetting(this.id, `w${g}`, v); this.rebuild(); } })),
       { type: "toggle", label: "신규성 띠 표시", value: this.showNovelty, onChange: (v) => setModSetting(this.id, "novelty", v) },
       { type: "range", label: "군집 반경", value: this.radius, min: 2, max: 12, step: 0.5, format: (v) => v.toFixed(1), onChange: (v) => setModSetting(this.id, "radius", v) },
+      { type: "range", label: "콤보 유지 시간", value: this.comboHold, min: 1, max: 8, step: 0.5, format: (v) => `${v} s`, onChange: (v) => setModSetting(this.id, "comboHold", v) },
       { type: "range", label: "반복 판정 (연속 횟수)", value: this.repeatN, min: 2, max: 8, step: 1, format: (v) => `${v}회`, onChange: (v) => setModSetting(this.id, "repeat", v) },
       { type: "range", label: "동일 판정 거리", value: this.similar, min: 0.5, max: 8, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "similar", v) },
       { type: "range", label: "온셋 감도 (σ)", value: this.onsetK, min: 1, max: 6, step: 0.25, format: (v) => v.toFixed(2), onChange: (v) => setModSetting(this.id, "onsetK", v) },
-      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; this.comboBy.clear(); } },
+      { type: "action", label: "지도 초기화", onClick: () => { this.events = []; this.clusters = []; this.nextCluster = 1; this.axesReady = false; this.warn = { text: "", until: 0, ids: [] }; this.combo = 0; this.comboBest = 0; this.comboLastAt = -1e9; this.comboEnd = 0; } },
     ];
   }
 
@@ -278,15 +284,15 @@ export class VariationMapModule implements Module {
   /** Combo bookkeeping for the newest event (see the module comment). */
   private updateCombo(ev: Ev) {
     const repeat = ev.nearD <= this.similar;
-    const prev = this.comboBy.get(ev.cluster) ?? 0;
+    const expired = this.clock - this.comboLastAt > this.comboHold;
     let n: number;
-    if (ev.novNew) { n = 1; this.comboBump = 0.5; }
-    else if (repeat) { n = 0; this.comboBreak = 1; this.lastRepeatAt = this.clock; }
-    else { n = prev + 1; this.comboBump = 1; }
-    this.comboBy.set(ev.cluster, n);
-    for (const id of [...this.comboBy.keys()]) if (!this.clusters.some((c) => c.id === id)) this.comboBy.delete(id);
+    if (repeat) { n = 0; this.comboBreak = 1; this.lastRepeatAt = this.clock; }
+    else if (ev.novNew || ev.cluster !== this.comboCluster || expired || this.combo === 0) { n = 1; this.comboBump = 0.5; }
+    else { n = this.combo + 1; this.comboBump = 1; }
     this.combo = n;
     this.comboCluster = ev.cluster;
+    this.comboLastAt = this.clock;
+    this.comboEnd = 0;
     this.comboBest = Math.max(this.comboBest, n);
     this.burst = 1;
   }
@@ -313,6 +319,9 @@ export class VariationMapModule implements Module {
     this.comboBump = Math.max(0, this.comboBump - dt * 3);
     this.comboBreak = Math.max(0, this.comboBreak - dt * 0.6);
     this.burst = Math.max(0, this.burst - dt * 1.8);
+    // the chain expires when no hit arrives within 콤보 유지 시간
+    if (this.combo > 0 && this.clock - this.comboLastAt > this.comboHold) { if (this.combo >= 2) { this.comboEnd = 1; this.comboEndN = this.combo; } this.combo = 0; }
+    this.comboEnd = Math.max(0, this.comboEnd - dt * 0.8);
     const listW = w > 320 ? 118 : 0;
     const stripH = this.showNovelty && h > 170 ? 46 : 0;
     const x0 = 10, x1 = w - listW - 8, y0 = 10, y1 = h - 10 - stripH;
@@ -386,7 +395,7 @@ export class VariationMapModule implements Module {
       }
     }
     // combo counter (top-right of the map)
-    if (this.combo >= 2 || this.comboBreak > 0) {
+    if (this.combo >= 2 || this.comboBreak > 0 || this.comboEnd > 0) {
       const tier = this.combo >= 10 ? theme("target") : this.combo >= 5 ? theme("peak") : theme("sig");
       const size = Math.min(34, 14 + this.combo * 1.6) * (1 + 0.25 * this.comboBump);
       const sx = this.comboBreak > 0 ? (Math.random() - 0.5) * 6 * this.comboBreak : 0;
@@ -401,6 +410,12 @@ export class VariationMapModule implements Module {
         ctx.fillText(`×${this.combo}`, x1 - 8 + sx, y0 + 4);
         ctx.fillStyle = theme("fg-1"); ctx.font = font(10, 600);
         ctx.fillText(`VARIATION COMBO · C${this.comboCluster}${this.comboBest > this.combo ? ` · 최고 ×${this.comboBest}` : ""}`, x1 - 8, y0 + 6 + size);
+        // remaining hold time as a shrinking bar under the label
+        const rem = Math.max(0, 1 - (this.clock - this.comboLastAt) / this.comboHold);
+        ctx.fillStyle = withAlpha(tier, 0.7); ctx.fillRect(x1 - 8 - 64 * rem, y0 + 6 + size + 14, 64 * rem, 2);
+      } else if (this.comboEnd > 0) {
+        ctx.fillStyle = withAlpha(theme("fg-2"), this.comboEnd); ctx.font = font(12, 600);
+        ctx.fillText(`콤보 ×${this.comboEndN} 종료 · 최고 ×${this.comboBest}`, x1 - 8, y0 + 6);
       }
     }
 

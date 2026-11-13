@@ -31,6 +31,7 @@ const IDX_LO = -45, IDX_HI = -10, IDX_GAMMA = 2;   // 강도 dB → 0…100
 const DB_TOP = -8, DB_BOT = -42;                    // history bar scale in dB mode
 const BAND_TOP = 0, BAND_BOT = -60;
 const OCT_LABELS = ["63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+const JAB_WIND = 0.12, JAB_HIT = 0.3; // punch motion phases (share of the jab)
 const POLL_MS = 150;
 const HOLD_S = 2.5;
 const SEGMENTS = 32;
@@ -82,7 +83,11 @@ export class PunchModule implements Module {
   private clock = 0;
   private gloveScale = 0;
   private gloveGlow = 0;
-  private jab = 0;
+  private jab = 0;              // 1 at a new hit → 0 (punch motion phase; slower for strong hits)
+  private hitPow = 0;           // 강도 index / 100 of the last hit — every motion amplitude follows it
+  private shakeT = 0;           // tile shake time left (s)
+  private shakeDur = 0;
+  private scorePop = 0;         // 1 → 0 digit pop after a hit
   // punching machine
   private tower = 0;            // lit fraction 0…1 (rises fast, holds, falls)
   private towerTarget = 0;
@@ -194,7 +199,6 @@ export class PunchModule implements Module {
         this.lastSeq = h.seq;
         this.hits.push(h);
         this.flashAnim = 1;
-        this.jab = 1;
       }
       while (this.hits.length > 200) this.hits.shift();
       this.stats = st;
@@ -209,7 +213,9 @@ export class PunchModule implements Module {
     else { this.holdAge += dt; if (this.holdAge > HOLD_S) this.liveHold = ballistic(this.liveHold, target, dt, 20); }
     this.flashAnim = Math.max(0, this.flashAnim - dt * 2);
     this.clock += dt;
-    this.jab = Math.max(0, this.jab - dt * 3);
+    this.jab = Math.max(0, this.jab - dt * (3.2 - 1.6 * this.hitPow)); // weak ~0.3 s, strong ~0.6 s
+    this.shakeT = Math.max(0, this.shakeT - dt);
+    this.scorePop = Math.max(0, this.scorePop - dt * 4);
     const last = this.hits[this.hits.length - 1] ?? null;
     {
       const ts = last ? this.rel(this.index(this.strengthDb(last))) : 0, tg = last ? last.flash / 100 : 0;
@@ -221,6 +227,13 @@ export class PunchModule implements Module {
     if (last && last.seq !== this.lastHitSeq) {
       this.lastHitSeq = last.seq;
       const idx = this.index(this.strengthDb(last));
+      // punch motion + impact: wind-up, thrust, contact burst, tile shake and digit pop,
+      // all scaled by the hit's 강도 (a weak tap barely nudges, a KO hit rocks the tile)
+      this.hitPow = idx / 100;
+      this.jab = 1;
+      this.scorePop = 1;
+      this.shakeDur = 0.15 + 0.35 * this.hitPow;
+      this.shakeT = this.shakeDur;
       this.towerTarget = idx / 100;
       this.towerHold = 1.4;
       this.scoreTarget = this.score(last);
@@ -240,8 +253,16 @@ export class PunchModule implements Module {
     const { ctx, w, h, dt } = d;
     this.poll();
     this.animate(dt, f);
-    if (this.view === "machine") this.drawMachine(ctx, w, h);
-    else this.drawAnalysis(ctx, w, h, f);
+    if (this.view === "machine") {
+      // tile shake after contact (amplitude ∝ 강도², decaying), then a white-out flash on KO-class hits
+      const sh = this.shakeT > 0 ? (1.5 + 9 * this.hitPow * this.hitPow) * (this.shakeT / this.shakeDur) : 0;
+      ctx.save();
+      if (sh > 0) ctx.translate((Math.random() - 0.5) * 2 * sh, (Math.random() - 0.5) * 2 * sh);
+      this.drawMachine(ctx, w, h);
+      ctx.restore();
+      const k = this.impactK();
+      if (k > 0 && this.hitPow > 0.85) { ctx.fillStyle = withAlpha(theme("fg-0"), 0.3 * k * k * (this.hitPow - 0.85) / 0.15); ctx.fillRect(0, 0, w, h); }
+    } else this.drawAnalysis(ctx, w, h, f);
   }
 
   // ---------------------------------------------------------------- punching machine
@@ -289,7 +310,7 @@ export class PunchModule implements Module {
     const idx = last ? this.index(this.strengthDb(last)) : 0;
     const relPos = last ? this.rel(idx) : 0;
     const digits = String(Math.round(this.scoreShown)).padStart(3, "0");
-    const bigPx = Math.max(22, Math.min(short ? 34 : 56, pw / 3.2));
+    const bigPx = Math.max(22, Math.min(short ? 34 : 56, pw / 3.2)) * (1 + 0.3 * this.scorePop * this.hitPow); // pops on a hit
     ctx.font = font(bigPx, 700);
     ctx.fillStyle = last ? this.tierColor(relPos) : theme("fg-2");
     ctx.fillText(last ? digits : "000", px0, y + 10);
@@ -420,23 +441,75 @@ export class PunchModule implements Module {
     }
   }
 
-  /** Glove centred at (cx, cy); `side` is the column — a weak hit uses ~1/3 of it, a strong one all of it. */
+  /** Impact phase of the current punch: 1 at contact → 0 about half a jab later (0 while idle). */
+  private impactK() {
+    if (this.jab <= 0) return 0;
+    const t = 1 - this.jab;
+    return t < JAB_HIT ? 0 : Math.max(0, 1 - (t - JAB_HIT) / (1 - JAB_HIT));
+  }
+
+  /** Glove centred at (cx, cy); `side` is the column — a weak hit uses ~1/3 of it, a strong one all of it.
+   *  Punch motion (phase = 1 − jab): wind-up (pull back to the right, squash), thrust to the left
+   *  (stretched, speed lines), contact (flash, shockwave rings, impact lines at the fist) and a
+   *  damped spring back with a wobble. Every amplitude follows the hit's 강도 (`hitPow`). */
   private drawGlove(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: number, hasHit: boolean) {
-    const s = this.gloveScale, g = this.gloveGlow;
-    const scale = (0.32 + 0.68 * s) * (1 + 0.2 * Math.sin(this.jab * Math.PI));
-    const size = side * scale;
-    const x0 = cx - size / 2 + 4 * Math.sin(this.jab * Math.PI);
-    const y0 = cy - size / 2;
+    const s = this.gloveScale, g = this.gloveGlow, pw = this.hitPow;
+    const size = side * (0.32 + 0.68 * s);
+    const reach = side * (0.2 + 0.5 * pw);
+    let dx = 0, sx = 1, sy = 1;
+    if (this.jab > 0) {
+      const t = 1 - this.jab;
+      if (t < JAB_WIND) { const u = t / JAB_WIND; dx = side * 0.12 * pw * Math.sin(u * Math.PI / 2); sx = 1 - 0.1 * pw * u; sy = 1 + 0.06 * pw * u; }
+      else if (t < JAB_HIT) { const u = (t - JAB_WIND) / (JAB_HIT - JAB_WIND); const e = 1 - Math.pow(1 - u, 3); dx = side * 0.12 * pw - e * (reach + side * 0.12 * pw); sx = 1 + 0.35 * pw * Math.sin(u * Math.PI); sy = 1 - 0.15 * pw * Math.sin(u * Math.PI); }
+      else { const u = (t - JAB_HIT) / (1 - JAB_HIT); dx = -reach * Math.exp(-4 * u) * Math.cos(u * Math.PI * 2.5); const wob = 0.2 * pw * Math.exp(-5 * u) * Math.sin(u * Math.PI * 3); sx = 1 - wob; sy = 1 + wob * 0.7; }
+    }
+    const k = this.impactK();
     ctx.save();
     ctx.globalAlpha = hasHit ? 1 : 0.35;
+    if (k > 0) {
+      // contact burst at the fist: flash, shockwave ring (a second red one past 70), impact lines
+      const q = 1 - k;
+      const fx = cx - reach - size * 0.45, fy = cy;
+      ctx.fillStyle = withAlpha(theme("target"), (0.15 + 0.5 * pw) * k);
+      ctx.beginPath(); ctx.arc(fx, fy, size * (0.25 + 0.55 * pw) * (0.6 + 0.4 * q), 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = withAlpha(theme("peak"), (0.5 + 0.5 * pw) * k); ctx.lineWidth = Math.max(1, size * (0.03 + 0.1 * pw) * k);
+      ctx.beginPath(); ctx.arc(fx, fy, size * (0.3 + q * (0.8 + 2.2 * pw)), 0, Math.PI * 2); ctx.stroke();
+      if (pw > 0.7) {
+        ctx.strokeStyle = withAlpha(theme("clip"), (pw - 0.7) * 2.5 * k); ctx.lineWidth = Math.max(1, size * 0.05 * k);
+        ctx.beginPath(); ctx.arc(fx, fy, size * (0.2 + q * (1.5 + 3 * pw)), 0, Math.PI * 2); ctx.stroke();
+      }
+      const n = pw < 0.3 ? 6 : pw < 0.7 ? 10 : 14, r0 = size * (0.3 + 0.5 * q * pw), len = size * (0.15 + 1.3 * pw) * (0.4 + 0.6 * k);
+      ctx.strokeStyle = withAlpha(theme("fg-0"), (0.4 + 0.6 * pw) * k); ctx.lineWidth = Math.max(1, size * (0.015 + 0.035 * pw));
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + (i % 2 ? 0.11 : 0);
+        const l = len * (i % 3 === 0 ? 1 : 0.6);
+        ctx.beginPath(); ctx.moveTo(fx + Math.cos(a) * r0, fy + Math.sin(a) * r0); ctx.lineTo(fx + Math.cos(a) * (r0 + l), fy + Math.sin(a) * (r0 + l)); ctx.stroke();
+      }
+    }
+    if (this.jab > 0) {
+      // speed lines behind (right of) the glove while it thrusts
+      const t = 1 - this.jab;
+      if (t > JAB_WIND && t < JAB_HIT + 0.12) {
+        const u = Math.min(1, (t - JAB_WIND) / (JAB_HIT - JAB_WIND));
+        const a = t < JAB_HIT ? 0.35 + 0.45 * pw : 0.8 * (1 - (t - JAB_HIT) / 0.12);
+        ctx.strokeStyle = withAlpha(theme("fg-1"), a); ctx.lineWidth = Math.max(1, size / 28);
+        const L = size * (0.25 + 0.9 * pw) * (0.4 + 0.6 * u);
+        for (let i = 0; i < 4; i++) {
+          const yy = cy + (i - 1.5) * size * 0.2, xr = cx + dx + size * 0.45;
+          ctx.beginPath(); ctx.moveTo(xr, yy); ctx.lineTo(xr + L * (i % 2 ? 0.7 : 1), yy); ctx.stroke();
+        }
+      }
+    }
+    ctx.translate(cx + dx, cy);
+    ctx.scale(sx, sy);
     if (g > 0.03) {
       const rad = size * (0.55 + 0.6 * g);
-      const grad = ctx.createRadialGradient(cx, cy, size * 0.2, cx, cy, rad);
+      const grad = ctx.createRadialGradient(0, 0, size * 0.2, 0, 0, rad);
       grad.addColorStop(0, withAlpha(theme("target"), 0.15 + 0.55 * g));
       grad.addColorStop(0.6, withAlpha(theme("peak"), 0.12 * g));
       grad.addColorStop(1, withAlpha(theme("target"), 0));
       ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
       if (g > 0.35) {
         const n = 8, len = size * (0.3 + 0.5 * g), a0 = this.clock * 0.6;
         ctx.strokeStyle = withAlpha(theme("target"), (g - 0.35) * 0.9);
@@ -444,11 +517,11 @@ export class PunchModule implements Module {
         for (let i = 0; i < n; i++) {
           const a = a0 + (i / n) * Math.PI * 2;
           const r0 = size * 0.5, r1 = r0 + len * (0.7 + 0.3 * Math.sin(this.clock * 3 + i));
-          ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.stroke();
         }
       }
     }
-    const ps = size / 16;
+    const ps = size / 16, x0 = -size / 2, y0 = -size / 2;
     for (let r = 0; r < 16; r++) {
       const row = GLOVE[r];
       for (let c = 0; c < 16; c++) {
