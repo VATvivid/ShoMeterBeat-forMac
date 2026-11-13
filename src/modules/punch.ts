@@ -23,6 +23,28 @@ const HOLD_S = 2.5;
 
 interface Rect { x: number; y: number; w: number; h: number }
 
+// Boxing-glove emoji (16×16, letters are theme tokens like the Emoji module): the glove
+// grows with the last hit's punch and the glow / rays around it grow with its flash index.
+const GLOVE_PAL: Record<string, string> = { k: "bg-3", r: "clip", w: "fg-0", d: "map-1" };
+const GLOVE: string[] = [
+  "................",
+  "......kkkkk.....",
+  ".....krrrrrkk...",
+  "....krrwrrrrrk..",
+  "...krrwwrrrrrrk.",
+  "..kkrrrrrrrrrrk.",
+  ".kwwkrrrrrrrrrrk",
+  ".kwwkrrrrrrrrrrk",
+  ".kwwkrrrrrrrrrrk",
+  ".kwwkkrrrrrrrrk.",
+  ".kwwk.krrrrrrrk.",
+  "..kk..kkrrrrrkk.",
+  "......krrrrrrk..",
+  ".......kkkkkk...",
+  "................",
+  "................",
+];
+
 export class PunchModule implements Module {
   readonly id = "punch";
   readonly title = "Punch";
@@ -39,10 +61,15 @@ export class PunchModule implements Module {
   private histBarW = 0;
   private histShown: PunchHit[] = [];
   private hover = -1;
+  private clock = 0;
+  private gloveScale = 0;       // eased 0…1 (punch index of the last hit)
+  private gloveGlow = 0;        // eased 0…1 (flash of the last hit)
+  private jab = 0;              // 1 right after a hit → 0 (the glove lunges)
 
   private get histN() { return modSetting(this.id, "hist", 40); }
   private get scale() { return modSetting(this.id, "scale", "db") as "db" | "index"; }
   private get showFlash() { return modSetting(this.id, "flash", true); }
+  private get showGlove() { return modSetting(this.id, "glove", true); }
   private get ref(): PunchHit | null { return modSetting<PunchHit | null>(this.id, "ref", null); }
 
   settings(): SettingItem[] {
@@ -50,6 +77,7 @@ export class PunchModule implements Module {
       { type: "select", label: "강도 척도", value: this.scale, options: [{ value: "db", label: "dB (풀스케일 기준)" }, { value: "index", label: "0–100 지수 (−50 dB → 0, +6 dB → 100)" }], onChange: (v) => setModSetting(this.id, "scale", v) },
       { type: "select", label: "히트 이력", value: String(this.histN), options: [20, 40, 80].map((v) => ({ value: String(v), label: `최근 ${v}개` })), onChange: (v) => setModSetting(this.id, "hist", Number(v)) },
       { type: "toggle", label: "화려함 지수 표시", value: this.showFlash, onChange: (v) => setModSetting(this.id, "flash", v) },
+      { type: "toggle", label: "글러브 이모지", value: this.showGlove, onChange: (v) => setModSetting(this.id, "glove", v) },
       { type: "action", label: "마지막 히트를 기준으로", onClick: () => { const h = this.hits[this.hits.length - 1]; if (h) setModSetting(this.id, "ref", h); } },
       { type: "action", label: "기준 해제", onClick: () => setModSetting(this.id, "ref", null) },
       { type: "action", label: "이력·세션 통계 초기화", onClick: () => { this.hits = []; getSource()?.punchReset().catch(() => {}); } },
@@ -108,6 +136,7 @@ export class PunchModule implements Module {
         this.lastSeq = h.seq;
         this.hits.push(h);
         this.flashAnim = 1;
+        this.jab = 1;
       }
       while (this.hits.length > 200) this.hits.shift();
       this.stats = st;
@@ -123,10 +152,21 @@ export class PunchModule implements Module {
     if (target >= this.liveHold) { this.liveHold = target; this.holdAge = 0; }
     else { this.holdAge += dt; if (this.holdAge > HOLD_S) this.liveHold = ballistic(this.liveHold, target, dt, 20); }
     this.flashAnim = Math.max(0, this.flashAnim - dt * 2);
+    this.clock += dt;
+    this.jab = Math.max(0, this.jab - dt * 3);
+    {
+      const lh = this.hits[this.hits.length - 1];
+      const ts = lh ? this.index(lh.punch_db) / 100 : 0, tg = lh ? lh.flash / 100 : 0;
+      const k = Math.min(1, dt * 8);
+      this.gloveScale += (ts - this.gloveScale) * k;
+      this.gloveGlow += (tg - this.gloveGlow) * k;
+    }
 
     const last = this.hits[this.hits.length - 1] ?? null;
     const ref = this.ref;
     const narrow = w < 220, short = h < 120, tiny = w < 120 || h < 70;
+    const gloveSide = this.showGlove && !tiny ? Math.max(26, Math.min(64, h * 0.32)) : 0;
+    const textMaxX = w - PAD - gloveSide * 1.3;
     const yOfDb = (v: number, y0: number, hh: number) => y0 + ((DB_TOP - Math.min(DB_TOP, Math.max(DB_BOT, v))) / (DB_TOP - DB_BOT)) * hh;
 
     // ---- readout row
@@ -147,6 +187,7 @@ export class PunchModule implements Module {
         parts.push(["피크", `${last.peak_db.toFixed(1).replace("-", "−")} dBFS`]);
         if (ref) parts.push(["기준 대비", this.delta(last.punch_db)]);
         for (const [k, v] of parts) {
+          if (x + 60 > textMaxX) break;
           ctx.fillStyle = theme("fg-1"); ctx.font = font(10); ctx.fillText(k, x, y + 2);
           x += ctx.measureText(k).width + 4;
           ctx.fillStyle = k === "기준 대비" ? theme("peak") : theme("fg-0"); ctx.font = font(13, 500); ctx.fillText(v, x, y);
@@ -155,6 +196,7 @@ export class PunchModule implements Module {
       }
       y += short ? 24 : 32;
     }
+    if (gloveSide) this.drawGlove(ctx, w - PAD - gloveSide / 2, PAD + gloveSide / 2, gloveSide, !!last);
 
     // ---- caption (session stats) at the bottom
     const capH = tiny ? 0 : 14;
@@ -196,6 +238,49 @@ export class PunchModule implements Module {
       ctx.fillStyle = theme("fg-2"); ctx.font = font(10); ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText("브라우저 미리보기", x + histW / 2, y + ph / 2);
     }
+  }
+
+  /** Glove centred at (cx, cy); `side` is the area for a weak hit, a strong one grows to ~1.6×. */
+  private drawGlove(ctx: CanvasRenderingContext2D, cx: number, cy: number, side: number, hasHit: boolean) {
+    const s = this.gloveScale, g = this.gloveGlow;
+    const scale = (0.65 + 0.95 * s) * (1 + 0.22 * Math.sin(this.jab * Math.PI));
+    const size = side * scale;
+    const x0 = cx - size / 2 + 4 * Math.sin(this.jab * Math.PI); // lunges to the right on a hit
+    const y0 = cy - size / 2;
+    ctx.save();
+    ctx.globalAlpha = hasHit ? 1 : 0.35;
+    // glow: warm radial light whose radius and brightness follow the flash index
+    if (g > 0.03) {
+      const rad = size * (0.55 + 0.9 * g);
+      const grad = ctx.createRadialGradient(cx, cy, size * 0.2, cx, cy, rad);
+      grad.addColorStop(0, withAlpha(theme("target"), 0.15 + 0.55 * g));
+      grad.addColorStop(0.6, withAlpha(theme("peak"), 0.12 * g));
+      grad.addColorStop(1, withAlpha(theme("target"), 0));
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill();
+      // rays appear once the hit is fairly showy and spin slowly
+      if (g > 0.35) {
+        const n = 8, len = size * (0.5 + 0.9 * g), a0 = this.clock * 0.6;
+        ctx.strokeStyle = withAlpha(theme("target"), (g - 0.35) * 0.9);
+        ctx.lineWidth = Math.max(1, size / 32);
+        for (let i = 0; i < n; i++) {
+          const a = a0 + (i / n) * Math.PI * 2;
+          const r0 = size * 0.5, r1 = r0 + len * (0.7 + 0.3 * Math.sin(this.clock * 3 + i));
+          ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.stroke();
+        }
+      }
+    }
+    const ps = size / 16;
+    for (let r = 0; r < 16; r++) {
+      const row = GLOVE[r];
+      for (let c = 0; c < 16; c++) {
+        const t = GLOVE_PAL[row[c]];
+        if (!t) continue;
+        ctx.fillStyle = theme(t);
+        ctx.fillRect(Math.round(x0 + c * ps), Math.round(y0 + r * ps), Math.ceil(ps), Math.ceil(ps));
+      }
+    }
+    ctx.restore();
   }
 
   private drawProfile(ctx: CanvasRenderingContext2D, r: Rect, last: PunchHit | null, ref: PunchHit | null) {
