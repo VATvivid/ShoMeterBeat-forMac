@@ -31,17 +31,18 @@ const IDX_LO = -45, IDX_HI = -10, IDX_GAMMA = 2;   // 강도 dB → 0…100
 const DB_TOP = -8, DB_BOT = -42;                    // history bar scale in dB mode
 const BAND_TOP = 0, BAND_BOT = -60;
 const OCT_LABELS = ["63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
-/** 화려함 tiers → colours. < 30: nothing (plain glove). 30–60: one warm colour. 60–85: four
- *  theme colours. ≥ 85: a rainbow that rotates with the clock. */
+/** 화려함 tiers → colours, cut to where real hits land (2026-11-13 loopback: game hits 40–51,
+ *  a dull 70 Hz thump 38, a bright wide noise burst 68). < 40: nothing (plain glove).
+ *  40–50: one warm colour. 50–60: four theme colours. ≥ 60: a rainbow that rotates with the clock. */
 function hslHex(h: number, s: number, l: number): string {
   const k = (n: number) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
   const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
   return "#" + [f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("");
 }
 function flashPalette(g: number, clock: number): string[] {
-  if (g < 0.3) return [];
-  if (g < 0.6) return [theme("target")];
-  if (g < 0.85) return [theme("target"), theme("peak"), theme("sig"), theme("sig-2")];
+  if (g < 0.4) return [];
+  if (g < 0.5) return [theme("target")];
+  if (g < 0.6) return [theme("target"), theme("peak"), theme("sig"), theme("sig-2")];
   const h0 = (clock * 90) % 360;
   return [0, 1, 2, 3, 4, 5].map((i) => hslHex((h0 + i * 60) % 360, 0.9, 0.6));
 }
@@ -264,10 +265,10 @@ export class PunchModule implements Module {
       // punch motion + impact: wind-up, thrust, contact burst, tile shake and digit pop,
       // all scaled by the hit's 강도 (a weak tap barely nudges, a KO hit rocks the tile)
       this.hitPow = idx / 100;
-      // 화려함 → sparks (from 55) and confetti (from 80) flying out of the fist
+      // 화려함 → sparks (from 48) and confetti (from 58) flying out of the fist
       const fl = last.flash / 100;
       const pal = flashPalette(fl, this.clock);
-      const n = fl < 0.55 ? 0 : Math.round(8 + 28 * fl), nc = fl >= 0.8 ? 12 : 0;
+      const n = fl < 0.48 ? 0 : Math.round(8 + 40 * (fl - 0.48)), nc = fl >= 0.58 ? Math.round(8 + 30 * (fl - 0.58)) : 0;
       const sp = Math.max(30, this.fist.size) / 60;
       for (let i = 0; i < n + nc; i++) {
         const a = Math.random() * Math.PI * 2, v = (40 + 140 * Math.random()) * (0.5 + sp) * (0.6 + 0.6 * fl);
@@ -564,7 +565,7 @@ export class PunchModule implements Module {
     ctx.translate(cx + dx, cy);
     ctx.scale(sx, sy);
     if (pal.length) {
-      // 화려함 glow: one colour (30–60), four colours (60–85), rotating rainbow (85+); rays from 40,
+      // 화려함 glow: one colour (40–50), four colours (50–60), rotating rainbow (60+); rays from 42,
       // more of them and faster the higher the index
       const rad = size * (0.55 + 0.6 * g);
       const c0 = pal[0], c1 = pal[1 % pal.length];
@@ -574,14 +575,14 @@ export class PunchModule implements Module {
       grad.addColorStop(1, withAlpha(c0, 0));
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
-      if (g > 0.4) {
-        const n = g < 0.6 ? 6 : g < 0.85 ? 10 : 16, len = size * (0.3 + 0.6 * g), a0 = this.clock * (0.6 + 2.5 * (g - 0.4));
+      if (g > 0.42) {
+        const n = g < 0.5 ? 6 : g < 0.6 ? 10 : 16, len = size * (0.3 + 0.6 * g), a0 = this.clock * (0.6 + 6 * (g - 0.42));
         ctx.lineWidth = Math.max(1, size / 32);
         for (let i = 0; i < n; i++) {
           const a = a0 + (i / n) * Math.PI * 2;
           const tw = 0.7 + 0.3 * Math.sin(this.clock * (3 + 4 * g) + i * 1.7);
           const r0 = size * 0.5, r1 = r0 + len * tw * (i % 2 ? 0.7 : 1);
-          ctx.strokeStyle = withAlpha(pal[i % pal.length], (g - 0.35) * 0.9 * tw);
+          ctx.strokeStyle = withAlpha(pal[i % pal.length], Math.min(1, (g - 0.38) * 2.5) * tw);
           ctx.beginPath(); ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0); ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1); ctx.stroke();
         }
       }
