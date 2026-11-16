@@ -22,7 +22,7 @@ impl Default for Send {
 impl Plugin for Send {
     const NAME: &'static str = "ShowMeterBeat Send";
     const VENDOR: &'static str = "VATvivid";
-    const URL: &'static str = "https://github.com/VATvivid/re-minimeter";
+    const URL: &'static str = "https://github.com/VATvivid/ShowMeterBeat";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
