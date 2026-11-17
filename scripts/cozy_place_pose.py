@@ -3,7 +3,8 @@
 # corner background on the rug with a soft contact shadow → corner_play<N>.png, and its sky mask
 # corner_play<N>_sky.png = the other poses' sky masks combined, minus this cat's pixels.
 #
-#   python -I -X utf8 scripts/cozy_place_pose.py <cat.png> <catless.png> public/cozy <N> <width> <centre x> <bottom y>
+#   python -I -X utf8 scripts/cozy_place_pose.py <cat.png> <catless.png> public/cozy <N> <width> <centre x> <bottom y> [corner.png]
+# (with corner.png the colours go half-way to the corner's own cat, like cozy_place_cats.py)
 import sys, os, numpy as np
 from PIL import Image
 
@@ -15,10 +16,41 @@ ys, xs = np.nonzero(a[..., 3] > 0)
 cat = Image.fromarray(a[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.uint8), "RGBA")
 th = round(cat.height * tw / cat.width)
 spr = np.array(cat.resize((tw, th), Image.BOX)).astype(np.float32)
-m = spr[..., 3:4] > 0
-spr[..., :3] = np.where(m, spr[..., :3] * np.array([1.0, 0.93, 0.85]) * np.linspace(0.92, 1.0, tw)[None, :, None] + np.array([10, 4, 0]), 0)
+m = spr[..., 3] > 20
 bg = np.array(Image.open(bg_p).convert("RGBA")).astype(np.float32)
 H, W = bg.shape[:2]
+# tone: match the colour statistics (per-channel mean / spread) of the cats already in the poses
+# (pastel sprite-sheet cats, 2026-11-17 사용자: 톤앤매너가 달라졌어) — the existing poses differ
+# from the cat-less background only where their cat is
+ref = []
+REF = sys.argv[8] if len(sys.argv) > 8 else None    # corner.png: same colour reference as cozy_place_cats.py
+if REF:
+    C = np.array(Image.open(REF).convert("RGBA")).astype(np.float32)
+    diff = np.abs(C[..., :3] - bg[..., :3]).sum(2) > 18
+    diff[:, :225] = False; diff[:, 375:] = False
+    ref.append(C[diff][:, :3])
+for k in (range(1, n) if not REF else []):
+    p = os.path.join(outdir, f"corner_play{k}.png")
+    if os.path.exists(p):
+        q = np.array(Image.open(p).convert("RGBA")).astype(np.float32)
+        ref.append(q[np.abs(q[..., :3] - bg[..., :3]).sum(2) > 30][:, :3])
+if ref:
+    ref = np.concatenate(ref)
+    px = spr[m][:, :3]
+    matched = ((px - px.mean(0)) / (px.std(0) + 1e-6)) * ref.std(0) + ref.mean(0)
+    spr[..., :3][m] = matched if not REF else px * 0.5 + matched * 0.5
+else:
+    spr[..., :3][m] = spr[..., :3][m] * np.array([1.0, 0.93, 0.85]) + np.array([10, 4, 0])
+spr[~m] = 0
+# the sprite-sheet cats have a thin soft brown outline: add one around the silhouette
+spr = np.pad(spr, ((1, 1), (1, 1), (0, 0)))
+m = np.pad(m, 1)
+ring = np.zeros_like(m)
+for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+    ring |= np.roll(m, (dy, dx), (0, 1))
+ring &= ~m
+spr[ring] = [150, 98, 80, 190]
+tw, th = tw + 2, th + 2
 out = bg.copy()
 yy, xx = np.mgrid[0:H, 0:W]
 d = ((xx - cx) / (tw * 0.46)) ** 2 + ((yy - (by - 1)) / 3.2) ** 2

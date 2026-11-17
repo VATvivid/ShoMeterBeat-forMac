@@ -1,42 +1,103 @@
-# Sleeping pose from the awake corner art: lift the cat's head out (ellipse + ear boxes, fur-coloured
-# pixels only for the ears), fill the hole by harmonic in-painting (Jacobi), then paste the head
-# lowered by D px and rotated by T rad around the neck. Writes RGBA PNG + a side-by-side preview.
-import sys, subprocess, numpy as np
-FF = r"D:/MakeNew/진우컴퍼니NEW/output/Project/audio-converter/bin/ffmpeg.exe"
-src, out, prev = sys.argv[1], sys.argv[2], sys.argv[3]
-D, T = float(sys.argv[4]), float(sys.argv[5])
-W, H = 424, 257
-img = np.frombuffer(subprocess.run([FF, "-v", "error", "-i", src, "-f", "rawvideo", "-pix_fmt", "rgba", "-"], capture_output=True, check=True).stdout, np.uint8).reshape(H, W, 4).astype(np.float32)
-yy, xx = np.mgrid[0:H, 0:W]
-r, g, b = img[..., 0], img[..., 1], img[..., 2]
-fur = ~((b > r + 4) & (b > g))              # window/sky is bluish; fur is white / brown / orange
-ell = ((xx - 263) / 27) ** 2 + ((yy - 183) / 27) ** 2 <= 1
-ears = ((xx >= 238) & (xx <= 290) & (yy >= 150) & (yy <= 172)) & fur
-warm = (r > b + 10)                          # ear fur / rim light is warm; the pale window mullion is not
-ears = ((xx >= 238) & (xx <= 292) & (yy >= 150) & (yy <= 182)) & warm
-M = (ell | ears) & (yy < 206)                # hole to fill (incl. the mullion strip behind the right ear)
-# grow mask by 1 px to swallow anti-aliased fringes
-Mg = M.copy()
-for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)): Mg |= np.roll(M, (dy, dx), (0, 1))
-M = Mg & (yy < 206)
-# the hole behind the head comes from the cat-less background (the whole cat removed and the window,
-# frame and cushion rebuilt by exemplar in-painting — scratchpad remove_cat6.py), so it is sharp, not blurred
-bgcl = np.frombuffer(subprocess.run([FF, "-v", "error", "-i", sys.argv[6] if len(sys.argv) > 6 else "catless.png", "-f", "rawvideo", "-pix_fmt", "rgba", "-"], capture_output=True, check=True).stdout, np.uint8).reshape(H, W, 4).astype(np.float32)
-plate = img.copy()
-plate[M] = bgcl[M]
-# lowered + tilted head
-px, py = 263 + 14, 183 + 27      # neck pivot (lower right of the head)
+# Sleeping pose from the awake corner art (2026-11-17, v3).
+# The pose is v1's — head lowered D px and tipped T rad around the neck, resting on the paws
+# (사용자: 아까처럼 엎드리는 게 맞고, 어깨랑 목이 자연스러워야 해). v1 cut the head out and pasted it
+# lower, which left a hard break at the neck and window showing between head and shoulder. v3:
+#   1) the whole cat is bent with the same move, faded out smoothly towards the back and the chest,
+#      so neck and shoulders stretch as one piece of fur (no seam, no gap);
+#   2) the head itself is then laid on top, moved rigidly (crisp, not stretched), its edge feathered
+#      so it melts into that fur — it covers the chest / paws the way a lowered head would.
+# The cat is lifted off the picture with the cat-less background (cozy_remove_cat.py +
+# cozy_window_fill.py), so whatever the head uncovers is that clean window.
+#
+#   python -I -X utf8 scripts/cozy_sleep_pose.py <corner.png> <catless.png> <out.png> [D=15] [T=-0.28]
+import sys, numpy as np
+from PIL import Image
+
+src, bgp, out = sys.argv[1], sys.argv[2], sys.argv[3]
+D = float(sys.argv[4]) if len(sys.argv) > 4 else 15.0
+T = float(sys.argv[5]) if len(sys.argv) > 5 else -0.28
+img = np.array(Image.open(src).convert("RGBA")).astype(np.float32)
+bg = np.array(Image.open(bgp).convert("RGBA")).astype(np.float32)
+H, W = img.shape[:2]
+yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
+# the cat = where the picture differs from the cat-less background
+cat = (np.abs(img[..., :3] - bg[..., :3]).sum(2) > 18).astype(np.float32)
+cat[:, :225] = 0
+cat[:, 375:] = 0
+
+
+def grow(m, n=1):
+    for _ in range(n):
+        g = m.copy()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            g = np.maximum(g, np.roll(m, (dy, dx), (0, 1)))
+        m = g
+    return m
+
+
+def blur(m, n=1):
+    for _ in range(n):
+        m = (m + np.roll(m, 1, 0) + np.roll(m, -1, 0) + np.roll(m, 1, 1) + np.roll(m, -1, 1)) / 5
+    return m
+
+
+alpha = np.clip(blur(cat, 1) * 1.6, 0, 1) * cat
+layer = img.copy()
+layer[..., 3] = alpha * 255
+
+
+def smooth(t):
+    t = np.clip(t, 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def sample(a, sx, sy):
+    x0 = np.floor(sx).astype(int); y0 = np.floor(sy).astype(int)
+    fx = (sx - x0)[..., None]; fy = (sy - y0)[..., None]
+    x0c, x1c = x0.clip(0, W - 1), (x0 + 1).clip(0, W - 1)
+    y0c, y1c = y0.clip(0, H - 1), (y0 + 1).clip(0, H - 1)
+    pm = a.copy(); pm[..., :3] *= pm[..., 3:4] / 255     # premultiplied bilinear
+    v = (pm[y0c, x0c] * (1 - fx) * (1 - fy) + pm[y0c, x1c] * fx * (1 - fy) + pm[y1c, x0c] * (1 - fx) * fy + pm[y1c, x1c] * fx * fy)
+    v[..., :3] /= np.maximum(v[..., 3:4], 1e-3) / 255
+    return v
+
+
+# the head's move as a backward map (output pixel → source pixel): lowered D, tipped T around the neck
+PX, PY = 277.0, 210.0
 c, s = np.cos(T), np.sin(T)
-ox, oy = xx - px, yy - D - py
-sx = c * ox + s * oy + px; sy = -s * ox + c * oy + py
-sxi, syi = np.rint(sx).astype(int).clip(0, W - 1), np.rint(sy).astype(int).clip(0, H - 1)
-P = M & ~((xx > 277) & (yy < 182))          # what moves with the head (not the mullion strip)
-take = P[syi, sxi] & (sx >= 0) & (sx < W) & (sy >= 0) & (sy < H)
-res = plate.copy()
-res[take] = img[syi[take], sxi[take]]
-o = res.clip(0, 255).astype(np.uint8)
-subprocess.run([FF, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-i", "-", "-frames:v", "1", "-update", "1", out], input=o.tobytes(), check=True)
-both = np.concatenate([img[130:240, 200:330], res[130:240, 200:330]], 1).clip(0, 255).astype(np.uint8)
-h, w = both.shape[:2]
-subprocess.run([FF, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{w}x{h}", "-i", "-", "-vf", "scale=iw*4:ih*4:flags=neighbor", "-frames:v", "1", "-update", "1", prev], input=both.tobytes(), check=True)
-print("ok", int(M.sum()), "px masked")
+ox, oy = xx - PX, yy - D - PY
+rsx = c * ox + s * oy + PX
+rsy = -s * ox + c * oy + PY
+# 1) bend: the same move, faded out towards the back (x 270 → 312) and the chest (y 205 → 242);
+#    the ramps are long enough that the map never folds
+w = smooth((312 - xx) / 42) * smooth((242 - yy) / 37)
+ell = (((xx - 263) / 27) ** 2 + ((yy - 183) / 27) ** 2 <= 1)
+r, g, b = img[..., 0], img[..., 1], img[..., 2]
+ears = (xx >= 238) & (xx <= 292) & (yy >= 150) & (yy <= 182) & (r > b + 10)
+headm = ((ell | ears) & (yy < 206)).astype(np.float32) * cat
+# the bent body leaves out the head and its pale ear rims (else they trail behind as a ghost);
+# the head laid on top covers that place
+earzone = ((xx >= 236) & (xx <= 296) & (yy >= 148) & (yy < 196)).astype(np.float32)
+nobody = np.maximum(grow(headm, 3) * (yy < 200), earzone * cat)
+blayer = layer.copy()
+blayer[..., 3] *= 1 - nobody
+body = sample(blayer, xx + w * (rsx - xx), yy + w * (rsy - yy))
+# 2) the head, moved rigidly, laid on top with a feathered edge
+headm = np.maximum(headm, earzone * cat)              # the whole ears, rims included, go with the head
+headm = blur(headm, 3)                                  # ~3 px soft edge into the bent fur
+head = img.copy()
+head[..., 3] = np.clip(headm * 1.4, 0, 1) * 255
+head = sample(head, rsx, rsy)
+
+
+def over(dst, srcl):
+    a = srcl[..., 3:4] / 255
+    o = dst.copy()
+    o[..., :3] = dst[..., :3] * (1 - a) + srcl[..., :3] * a
+    o[..., 3] = np.maximum(dst[..., 3], srcl[..., 3])
+    return o
+
+
+res = over(over(bg, body), head)
+Image.fromarray(res.clip(0, 255).astype(np.uint8), "RGBA").save(out)
+print("sleep pose: head down", D, "px, tipped", T, "rad")

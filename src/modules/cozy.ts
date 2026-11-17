@@ -223,8 +223,10 @@ export class CozyModule implements Module {
     this.quietFor = playing ? 0 : this.quietFor + dt;
     const wantAwake = this.quietFor < 2 ? 1 : 0;
     this.awake += (wantAwake - this.awake) * Math.min(1, dt * (wantAwake ? 3 : 0.8));
-    const target = playing ? 0.55 + 0.45 * Math.max(0, Math.min(1, (this.level + 45) / 35)) : 0.4;
-    this.lamp += (target - this.lamp) * Math.min(1, dt * 2);
+    // lamp: on with the music (brightness follows the level), off in silence (2026-11-17 사용자:
+    // 음악이 없을 때 스탠드가 꺼져 보이게) — switches on quickly, fades off over ~1.5 s
+    const target = playing ? 0.55 + 0.45 * Math.max(0, Math.min(1, (this.level + 45) / 35)) : 0;
+    this.lamp += (target - this.lamp) * Math.min(1, dt * (target > this.lamp ? 4 : 0.7));
     if (Math.max(f.peak[0], f.peak[1]) > -0.2) this.flicker = 0.25;
     this.flicker = Math.max(0, this.flicker - dt);
     const rise = f.punchM - this.lastPunch;
@@ -247,11 +249,14 @@ export class CozyModule implements Module {
     for (let i = 0; i < 5; i++) {
       const v = Math.max(0, Math.min(1, (this.bandDb(f, edges[i][0], edges[i][1]) + 60) / 45));
       this.bands[i] += (v - this.bands[i]) * Math.min(1, dt * (v > this.bands[i] ? 14 : 4));
-      // window light follows *change* in each band, not only its level: a slow mean per band, and the
-      // beam = base + 2.5 × (v − mean), so a steady mix glows quietly and every swell visibly flares
-      this.bandMean[i] += (v - this.bandMean[i]) * Math.min(1, dt * 0.5);
-      const tgt = playing ? Math.max(0, Math.min(1, 0.25 * v + 2.5 * (v - this.bandMean[i]))) : 0;
-      this.light[i] += (tgt - this.light[i]) * Math.min(1, dt * (tgt > this.light[i] ? 7 : 1.8));
+      // window light: the slow average of each band (~4 s), drifting on its own ~19 s swell, eased
+      // in over ~3 s and out over ~5 s — it follows the music's overall colour, never its hits, so
+      // it does not pulse in step with the lamp (which follows the level within ~0.5 s).
+      // (2026-11-17 사용자: 번개 같다 → 약하게, 이어서 스탠드와 타이밍이 맞으면 안 되고 더 느리고 서서히)
+      this.bandMean[i] += (v - this.bandMean[i]) * Math.min(1, dt * 0.25);
+      const drift = 0.6 + 0.4 * Math.sin(this.t * (2 * Math.PI / 19) + i * 1.3);
+      const tgt = playing ? Math.max(0, Math.min(1, 0.6 * this.bandMean[i] * drift)) : 0;
+      this.light[i] += (tgt - this.light[i]) * Math.min(1, dt * (tgt > this.light[i] ? 0.35 : 0.2));
     }
     {
       // plant: the sway fades in while sound plays and settles when it stops (no strength dependence)
@@ -544,7 +549,7 @@ export class CozyModule implements Module {
       const sky = mix(cyc[k], cyc[(k + 1) % cyc.length], fr * fr * (3 - 2 * fr));
       this.tintSky(ctx, sky, "color", 0.5, ox, oy, s);
       // 2) the glass brightens softly where the music swells
-      if (glow > 0.01) this.tintSky(ctx, tok("dusk1"), "lighter", 0.32 * glow, ox, oy, s);
+      if (glow > 0.01) this.tintSky(ctx, tok("dusk1"), "lighter", 0.14 * glow, ox, oy, s);
     }
     // 3) a soft pool of window light on the floor and the cat, breathing with the bands — no hard
     //    edges; painted only over the picture ("source-atop"), never onto the desktop
@@ -553,7 +558,7 @@ export class CozyModule implements Module {
       ctx.globalCompositeOperation = "source-atop";
       const px = ox + (win.x + win.w * 0.35) * s, py = oy + (win.y + win.h + 4) * s;
       const gr = ctx.createRadialGradient(px, py, 2 * s, px, py, 46 * s);
-      gr.addColorStop(0, withAlpha(tok("brass"), 0.32 * glow)); gr.addColorStop(0.55, withAlpha(tok("pink"), 0.12 * glow)); gr.addColorStop(1, withAlpha(tok("pink"), 0));
+      gr.addColorStop(0, withAlpha(tok("brass"), 0.18 * glow)); gr.addColorStop(0.55, withAlpha(tok("pink"), 0.07 * glow)); gr.addColorStop(1, withAlpha(tok("pink"), 0));
       ctx.fillStyle = gr;
       ctx.fillRect(ox + (win.x - 50) * s, oy + (win.y + 20) * s, (win.w + 70) * s, (win.h + 10) * s);
       ctx.restore();
@@ -570,11 +575,28 @@ export class CozyModule implements Module {
       ctx.drawImage(this.plantArt, -pv.x * s, -pv.y * s, MINI_W * s, MINI_H * s);
       ctx.restore();
     }
+    // lamp off: the painting's lit bulb and the warm light under the shade are darkened (only over
+    // the picture, "source-atop"), fading in as the lamp fades out
+    {
+      const off = 1 - Math.max(0, Math.min(1, this.lamp / 0.5));
+      if (off > 0.01) {
+        const bx = ox + lamp.x * s, by = oy + (lamp.y + 2) * s;
+        ctx.save();
+        ctx.globalCompositeOperation = "source-atop";
+        const dk = ctx.createRadialGradient(bx, by, 0, bx, by, 24 * s);
+        const shade = mix(tok("line"), tok("dusk3"), 0.35);
+        dk.addColorStop(0, withAlpha(shade, 0.85 * off)); dk.addColorStop(0.3, withAlpha(shade, 0.65 * off)); dk.addColorStop(1, withAlpha(shade, 0));
+        ctx.fillStyle = dk;
+        ctx.fillRect(bx - 24 * s, by - 16 * s, 48 * s, 44 * s);
+        ctx.restore();
+      }
+    }
     // lamp glow
     const a = this.lamp * (this.flicker > 0 && Math.sin(this.t * 60) > 0 ? 0.4 : 1);
-    const g = ctx.createRadialGradient(ox + lamp.x * s, oy + lamp.y * s, s, ox + lamp.x * s, oy + lamp.y * s, 40 * s);
-    g.addColorStop(0, withAlpha(tok("brass"), 0.35 * a)); g.addColorStop(1, withAlpha(tok("brass"), 0));
-    ctx.fillStyle = g; ctx.fillRect(ox + (lamp.x - 40) * s, oy + (lamp.y - 20) * s, 80 * s, 70 * s);
+    // (2026-11-17 사용자: 조금 더 강하게 — 중심 0.35 → 0.5, 반경 40 → 46, 중간 단계로 넓게 퍼짐)
+    const g = ctx.createRadialGradient(ox + lamp.x * s, oy + lamp.y * s, s, ox + lamp.x * s, oy + lamp.y * s, 46 * s);
+    g.addColorStop(0, withAlpha(tok("brass"), 0.5 * a)); g.addColorStop(0.4, withAlpha(tok("brass"), 0.2 * a)); g.addColorStop(1, withAlpha(tok("brass"), 0));
+    ctx.fillStyle = g; ctx.fillRect(ox + (lamp.x - 46) * s, oy + (lamp.y - 24) * s, 92 * s, 78 * s);
     // rain on the window
     if (this.rain > 0.05) for (const r of this.drops) S.rect(win.x + 2 + Math.floor(r.x * (win.w - 4)), win.y + Math.floor(r.y * win.h / 44), 1, 3, withAlpha(tok("w"), 0.45 * this.rain));
     // radio: no drawn bars over the painting (2026-11-17 사용자: 라디오에 걸친 이펙트가 어색) — the

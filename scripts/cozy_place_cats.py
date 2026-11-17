@@ -1,9 +1,14 @@
 # Cuts the three cats out of the user's sprite sheet, cleans the coloured fringe, scales them with a
-# premultiplied box filter, warms them to the scene's sunset light, and composites each on the
+# premultiplied box filter, repaints them in the corner cat's style (cozy_restyle.py), and composites each on the
 # cat-less corner background (on the cushion) with a soft contact shadow → corner_play1..3.png.
-import sys, subprocess, numpy as np
+import sys, os, subprocess, numpy as np
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cozy_restyle import restyle
 FF = r"D:/MakeNew/진우컴퍼니NEW/output/Project/audio-converter/bin/ffmpeg.exe"
 sheet, bg_path, outdir = sys.argv[1:4]
+# one scale for all three cats (they are drawn at one scale on the sheet), chosen so they match the
+# corner's own cat (2026-11-17 사용자: 고양이들 사이즈 맞춰, 기지개가 작아 보이고 그림체가 달라 보여)
+K = float(sys.argv[4]) if len(sys.argv) > 4 else 0.215
 def load(p):
     info = subprocess.run([FF, "-i", p], capture_output=True, text=True, encoding="utf-8", errors="replace").stderr
     import re
@@ -56,18 +61,18 @@ def box_down(spr, tw):
     a = out[..., 3:4]
     out[..., :3] = np.where(a > 0, out[..., :3] / (a / 255.0 + 1e-6), 0)
     return out
-# per cat: (target width in art px, centre x, bottom y)
-spec = [(112, 296, 247), (70, 292, 247), (118, 300, 248)]
-for n, ((x0, x1), (tw, cx, by)) in enumerate(zip(merged, spec), start=1):
+# per cat: (centre x, bottom y) on the rug
+spec = [(298, 248), (292, 248), (300, 248)]
+for n, ((x0, x1), (cx, by)) in enumerate(zip(merged, spec), start=1):
+    tw = round((x1 - x0) * K)
     crop = S[:, x0:x1]
     rows = np.nonzero((crop[..., 3] > 8).any(1))[0]
     crop = crop[rows[0]:rows[-1] + 1]
     spr = box_down(crop, tw)
-    # warm the pastel sprite toward the sunset room light, a touch darker away from the window (left)
     hh, ww = spr.shape[:2]
-    warm = np.array([1.0, 0.9, 0.8], np.float32)
-    side = np.linspace(0.9, 1.0, ww)[None, :, None]
-    spr[..., :3] = spr[..., :3] * warm * side + np.array([18, 6, 0], np.float32) * (spr[..., :3] > 0)
+    # repaint in the corner cat's style (cozy_restyle.py), then the room's warm evening light
+    spr = restyle(spr, keep_red=(n == 1))
+    spr[..., :3] = spr[..., :3] * np.array([1.0, 0.96, 0.92], np.float32) * np.linspace(0.94, 1.0, ww)[None, :, None]
     out = bg.copy()
     X0, Y0 = int(cx - ww / 2), int(by - hh)
     # contact shadow on the cushion
