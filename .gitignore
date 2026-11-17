@@ -9,3 +9,7 @@ Thumbs.db
 src-tauri/plugins/
 crates/*/target/
 src-tauri/models/
+
+# Python bytecode (scripts/*.py imported by each other)
+__pycache__/
+*.pyc
