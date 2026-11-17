@@ -5,6 +5,7 @@ import { setSource } from "./engine/instance";
 import { createSource, inTauri } from "./engine/source";
 import { Grid } from "./layout/grid";
 import { initPop } from "./pop";
+import { initMini, IS_MINI } from "./mini";
 import { IS_POP } from "./state";
 import { notice } from "./status";
 import { initToolbar, type Toolbar } from "./toolbar";
@@ -18,9 +19,10 @@ const grid = new Grid($("grid"));
 document.body.classList.toggle("pop", IS_POP);
 
 let toolbar: Toolbar | null = null;
-if (IS_POP) initPop(grid);
+if (IS_MINI) initMini(grid);
+else if (IS_POP) initPop(grid);
 else toolbar = initToolbar(grid, source);
-initWindowing(grid);
+if (!IS_MINI) initWindowing(grid); // the mini window takes no tiles from anyone and hands none back
 
 document.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;

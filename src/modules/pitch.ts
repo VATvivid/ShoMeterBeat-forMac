@@ -2,6 +2,7 @@ import { freqToIndex, pointFreq, type Frame } from "../engine/frame";
 import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
+import { playNote } from "./keysynth";
 
 // Melodyne-style note blocks: time runs left→right (newest at the right edge),
 // pitch on a semitone grid with piano keys. Consecutive frames on the same
@@ -33,6 +34,28 @@ export class PitchModule implements Module {
   private center = 60;                 // smoothed window centre (midi)
   private lastMidi = NaN;
   private curNote = NaN;               // note with hysteresis (±0.6 st before switching)
+  /** Key column geometry of the last draw (click-to-play). */
+  private keys: { y0: number; rowH: number; top: number; bottom: number } | null = null;
+
+  /** Clicking a key in the left column plays that note (keysynth). */
+  mount(body: HTMLElement, isEditing: () => boolean) {
+    const noteAt = (x: number, y: number) => {
+      const k = this.keys;
+      if (!k || x >= KEY_W - 4 || y < k.y0) return NaN;
+      const m = k.top - 1 - Math.floor((y - k.y0) / k.rowH);
+      return m >= k.bottom && m < k.top ? m : NaN;
+    };
+    body.addEventListener("pointermove", (e) => {
+      const r = body.getBoundingClientRect();
+      body.style.cursor = Number.isNaN(noteAt(e.clientX - r.left, e.clientY - r.top)) ? "" : "pointer";
+    });
+    body.addEventListener("pointerdown", (e) => {
+      if (isEditing() || e.button !== 0) return;
+      const r = body.getBoundingClientRect();
+      const m = noteAt(e.clientX - r.left, e.clientY - r.top);
+      if (!Number.isNaN(m)) playNote(m, 0.8);
+    });
+  }
 
   constructor() {
     const cap = 30 * RATE;
@@ -126,6 +149,7 @@ export class PitchModule implements Module {
     const pw = x1 - x0, ph = y1 - y0;
     if (pw < 20 || ph < 20) return;
     const rowH = ph / span;
+    this.keys = { y0, rowH, top, bottom };
     const yOf = (m: number) => y0 + (top - m) * rowH;        // midi (continuous) → y (note centre at m)
     const xOf = (i: number) => x1 - ((n - 1 - i) / (total - 1)) * pw; // i = index in the last n samples
 

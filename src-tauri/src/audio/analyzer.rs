@@ -227,6 +227,7 @@ impl Analyzer {
         let (mm, ms) = (self.mags_m.clone(), self.mags_s.clone());
         self.bands_of(&mm, &mut f.spectrum_m);
         self.bands_of(&ms, &mut f.spectrum_s);
+        super::melody::analyze(&mm, self.sr / FFT_N as f32, &mut f.melody);
 
         let l = self.tail(0, RMS_N);
         let r = self.tail(1, RMS_N);

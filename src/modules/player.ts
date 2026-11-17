@@ -35,11 +35,12 @@ export class PlayerModule implements Module {
   private noteUntil = 0;
   private loading = false;
 
-  private get priorBpm() { return modSetting(this.id, "prior", 110); }
+  /** 0 = automatic (wide prior + octave tie-break in tempo.rs); otherwise a genre centre. */
+  private get priorBpm() { return modSetting(this.id, "prior", 0); }
 
   settings(): SettingItem[] {
     return [
-      { type: "select", label: "템포 사전 (장르)", value: String(this.priorBpm), options: [[85, "느림 (85)"], [110, "보통 (110)"], [130, "빠름 (130)"], [150, "매우 빠름 (150)"]].map(([v, l]) => ({ value: String(v), label: String(l) })), onChange: (v) => { setModSetting(this.id, "prior", Number(v)); if (this.path) this.reanalyze(); } },
+      { type: "select", label: "템포 사전", value: String(this.priorBpm), options: [[0, "자동 (기본)"], [85, "느림 (85)"], [110, "보통 (110)"], [130, "빠름 (130)"], [150, "매우 빠름 (150)"]].map(([v, l]) => ({ value: String(v), label: String(l) })), onChange: (v) => { setModSetting(this.id, "prior", Number(v)); if (this.path) this.reanalyze(); } },
       { type: "action", label: "다시 분석", onClick: () => this.reanalyze() },
       { type: "action", label: "파일 닫기", onClick: () => this.unload() },
     ];

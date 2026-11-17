@@ -18,16 +18,38 @@
   --map-1: #1b2a6b;
   --map-2: #2eddc4;
   --map-3: #f2f5a0;
+  /* Cozy module scene (DESIGN.md §2 "Cozy scene"): warm pastel room after the Healimals tone — used only by cozy.ts */
+  --cozy-cream: #ead6b6;    /* wall */
+  --cozy-cream-2: #d9c09a;  /* wall shade, radio body */
+  --cozy-wood: #c08f5e;     /* floor, desk */
+  --cozy-wood-2: #8a5e3c;   /* shelf, dark wood */
+  --cozy-line: #3d2b24;     /* the thick soft outline */
+  --cozy-sage: #8fae8b;     /* lamp shade, leaves */
+  --cozy-brass: #e3b45c;    /* lamp, candle light */
+  --cozy-rust: #cf6f49;     /* curtains, carpet */
+  --cozy-dusk-1: #f4c9a4;   /* sky at the horizon */
+  --cozy-dusk-2: #cfa5cc;   /* sky middle */
+  --cozy-dusk-3: #6d86c6;   /* sky top */
+  --cozy-bush: #4c6e55;     /* trees outside */
+  --cozy-cat: #f7d9a4;      /* orange-cream cat */
+  --cozy-cat-2: #fff5e6;    /* muzzle, chest */
+  --cozy-pink: #e8a0a0;     /* ears, nose, cheeks, flowers */
+  --cozy-book-a: #7d9bb3;
+  --cozy-book-b: #c58a6c;
+  --cozy-book-c: #a4b37d;
+  --cozy-book-d: #d8b36a;
   --font: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --gutter: 6px;
   /* 투명도 (배경만): 1 = opaque. Backgrounds mix with transparent by this amount; text and plots stay sharp. */
   --bg-alpha: 1;
+  /* 빈 영역(타일 없는 창 바탕) 투명도 — windows.ts applyOpacity가 settings.gridOpacity로 따로 정한다 */
+  --grid-alpha: 1;
 }
 
 * { box-sizing: border-box; }
 html, body {
   margin: 0; height: 100%; overflow: hidden;
-  background: color-mix(in srgb, var(--bg-0) calc(var(--bg-alpha) * 100%), transparent); color: var(--fg-0);
+  background: color-mix(in srgb, var(--bg-0) calc(var(--grid-alpha) * 100%), transparent); color: var(--fg-0);
   font-family: var(--font); font-size: 11px;
   font-variant-numeric: tabular-nums;
   user-select: none; -webkit-user-select: none;
@@ -126,7 +148,8 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
 /* Status bar */
 #statusbar {
   height: 22px; flex: 0 0 22px; display: flex; align-items: center; gap: 8px; padding: 0 8px;
-  background: color-mix(in srgb, var(--bg-2) calc(var(--bg-alpha) * 100%), transparent); border-top: 1px solid var(--line); color: var(--fg-1); font-size: 10px;
+  /* the bottom strip belongs to the empty area: it fades with 빈 영역 (--grid-alpha), the toolbar does not */
+  background: color-mix(in srgb, var(--bg-2) calc(var(--grid-alpha) * 100%), transparent); border-top: 1px solid color-mix(in srgb, var(--line) calc(var(--grid-alpha) * 100%), transparent); color: var(--fg-1); font-size: 10px;
 }
 #statusbar .sep { color: var(--fg-2); }
 #st-state.err { color: var(--clip); }
@@ -168,6 +191,29 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
 
 /* Dock panel rows */
 #dock-panel label.row { justify-content: space-between; }
+.ctx-hint { color: var(--fg-2); font-size: 10px; padding: 4px 2px 2px; }
+/* Frameless main window (frameless.ts): own window buttons + invisible edge grips */
+/* pinned to the toolbar's right end so a crowded toolbar can never push 닫기 out of reach */
+#win-ctl { display: none; gap: 2px; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); padding-left: 4px; background: var(--bg-2); z-index: 5; }
+body.frameless #toolbar { position: relative; padding-right: 92px; }
+body.frameless #win-ctl { display: flex; }
+body.docked #win-ctl { display: none; }
+.win-ctl-btn { width: 26px; padding: 0; background: transparent; border-color: transparent; }
+.win-ctl-btn:hover { background: var(--bg-3); }
+.win-ctl-btn.close:hover { background: var(--clip); color: var(--fg-0); }
+.edge-grip { display: none; position: fixed; z-index: 90; }
+body.frameless:not(.docked) .edge-grip { display: block; }
+.edge-grip.w { left: 0; top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+.edge-grip.e { right: 0; top: 8px; bottom: 8px; width: 5px; cursor: ew-resize; }
+.edge-grip.s { bottom: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.edge-grip.n { top: 0; left: 8px; right: 8px; height: 3px; cursor: ns-resize; }
+.edge-grip.sw { left: 0; bottom: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.edge-grip.se { right: 0; bottom: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.edge-grip.nw { left: 0; top: 0; width: 8px; height: 6px; cursor: nwse-resize; }
+.edge-grip.ne { right: 0; top: 0; width: 8px; height: 6px; cursor: nesw-resize; }
+/* 🐱 cozy-mini toggle in the toolbar */
+.btn.mini-cat { width: 30px; padding: 0; font-size: 15px; line-height: 1; }
+.btn.mini-cat.on { background: rgba(255, 152, 67, 0.18); border-color: var(--peak); }
 #dock-panel input[type="radio"] { appearance: none; width: 12px; height: 12px; margin: 0; border: 1px solid var(--fg-2); border-radius: 50%; background: transparent; cursor: pointer; }
 #dock-panel input[type="radio"]:checked { border: 3px solid var(--sig); }
 
@@ -182,6 +228,32 @@ body[data-dock="top"] #grid, body[data-dock="bottom"] #grid { overflow-x: auto; 
 body[data-dock="left"] #grid, body[data-dock="right"] #grid { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 body.docked .tile-head { height: 18px; flex: 0 0 18px; font-size: 10px; }
 body.docked .tile-head .readout { display: none; }
+/* Strip-thickness grip on the inner edge of a docked window (dock.ts installDockGrip) */
+#dock-grip { display: none; position: fixed; z-index: 70; background: transparent; }
+#dock-grip:hover, #dock-grip:active { background: color-mix(in srgb, var(--sig) 45%, transparent); }
+body.docked #dock-grip { display: block; }
+body[data-dock="top"] #dock-grip { left: 0; right: 0; bottom: 0; height: 5px; cursor: ns-resize; }
+body[data-dock="bottom"] #dock-grip { left: 0; right: 0; top: 0; height: 5px; cursor: ns-resize; }
+body[data-dock="left"] #dock-grip { top: 0; bottom: 0; right: 0; width: 5px; cursor: ew-resize; }
+body[data-dock="right"] #dock-grip { top: 0; bottom: 0; left: 0; width: 5px; cursor: ew-resize; }
+/* Docked strip: opaque and edge to edge — no desktop showing through gaps or corners,
+   whatever the 투명도 setting (2026-11-17 사용자) */
+body.docked, body.docked #toolbar { background: var(--bg-0); }
+body.docked .tile { border-radius: 0; background: var(--bg-1); }
+body.docked .tile-head { background: var(--bg-2); }
+/* Cozy mini: a dedicated window that is just the pet on the desktop — no chrome, no backgrounds */
+/* the html element paints the page background too (html, body share the rule above) — both must go */
+html.mini, body.mini, body.mini #toolbar { background: transparent; }
+body.mini #toolbar, body.mini #statusbar { display: none; }
+body.mini #grid, body.pop.mini #grid { margin: 0; }
+body.mini .tile { background: transparent; border: none; border-radius: 0; }
+body.mini .tile-head { display: none; }
+body.mini .tile .resize-handle { display: none; }
+body.mini .tile-body { cursor: grab; }
+body.mini .mini-close { position: fixed; top: 2px; right: 4px; z-index: 80; width: 18px; height: 18px; padding: 0; font-size: 10px; opacity: 0; transition: opacity 150ms; }
+body.mini:hover .mini-close { opacity: 0.85; }
+#mini-resize { position: fixed; left: 0; top: 0; width: 16px; height: 16px; z-index: 80; cursor: nwse-resize; opacity: 0; transition: opacity 150ms; background: linear-gradient(315deg, transparent 50%, var(--fg-1) 50%); border-radius: 0 0 4px 0; }
+body.mini:hover #mini-resize { opacity: 0.7; }
 body.docked.dock-tiny .tile-head { display: none; }
 
 /* Waveform selection overlay (WAV 저장 / 취소) */

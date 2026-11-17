@@ -137,12 +137,17 @@ export async function setAlwaysOnTop(on: boolean) {
  *  (WS_EX_LAYERED). 0 is applied as a faint 3 % in window mode so the window stays clickable. */
 export async function applyOpacity(pct: number) {
   const p = Math.max(0, Math.min(100, pct));
+  // the empty area (html/body behind the tiles) has its own alpha — `settings.gridOpacity`,
+  // null = same as the tiles — so the unused grid can vanish while the tiles stay readable
+  const g = settings.gridOpacity === null ? p : Math.max(0, Math.min(100, settings.gridOpacity));
   if (settings.opacityMode === "window") {
     document.documentElement.style.setProperty("--bg-alpha", "1");
+    document.documentElement.style.setProperty("--grid-alpha", "1");
     if (!inTauri) return;
     await invoke("set_opacity", { alpha: Math.max(0.03, p / 100) }).catch((e) => console.error(e));
   } else {
     document.documentElement.style.setProperty("--bg-alpha", String(p / 100));
+    document.documentElement.style.setProperty("--grid-alpha", String(g / 100));
     if (!inTauri) return;
     await invoke("set_opacity", { alpha: 1 }).catch((e) => console.error(e));
   }

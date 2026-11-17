@@ -18,6 +18,7 @@ pub mod recorder;
 pub mod subtitle;
 pub mod tagger;
 pub mod tempo;
+pub mod melody;
 pub mod voice;
 pub mod wave;
 
@@ -238,6 +239,66 @@ pub fn start(shared: Arc<Shared>) {
     }
 }
 
+/// Mixes DAW-bridge audio (`fifo`, interleaved stereo) into the device chunk without
+/// changing the chunk's length: while the device stream is alive it sets the pace and the
+/// bridge contributes at most `chunk.len()` samples per call (the FIFO is capped at
+/// `max_samples`, oldest dropped, so a plugin running slightly ahead cannot pile up); when
+/// no device audio is arriving (Plugin mode, or an idle loopback) the bridge drives and
+/// the whole FIFO becomes the chunk.
+fn mix_bridge(chunk: &mut Vec<f32>, fifo: &mut VecDeque<f32>, device_alive: bool, max_samples: usize) {
+    if device_alive {
+        if fifo.len() > max_samples {
+            let drop = fifo.len() - max_samples;
+            fifo.drain(..drop);
+        }
+        let n = chunk.len().min(fifo.len());
+        for (c, p) in chunk.iter_mut().zip(fifo.drain(..n)) {
+            *c += p;
+        }
+    } else if chunk.is_empty() {
+        chunk.extend(fifo.drain(..));
+    } else {
+        // device audio just resumed: mix what fits, keep the rest for the next calls
+        let n = chunk.len().min(fifo.len());
+        for (c, p) in chunk.iter_mut().zip(fifo.drain(..n)) {
+            *c += p;
+        }
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::*;
+
+    /// 10 ms device callbacks (480 frames) polled by a 4 ms loop (0 / 0 / 480 pattern) with
+    /// the bridge delivering 192 frames per iteration must not add a single frame to the
+    /// device time base.
+    #[test]
+    fn bridge_never_stretches_the_device_clock() {
+        let mut fifo = VecDeque::new();
+        let mut device_frames = 0usize;
+        let mut out_frames = 0usize;
+        for i in 0..300 {
+            let mut chunk: Vec<f32> = if i % 5 == 0 || i % 5 == 2 { vec![0.1; 480 * 2] } else { Vec::new() };
+            device_frames += chunk.len() / 2;
+            fifo.extend(std::iter::repeat(0.2f32).take(192 * 2));
+            mix_bridge(&mut chunk, &mut fifo, true, 48_000 * 2 / 5);
+            out_frames += chunk.len() / 2;
+        }
+        assert_eq!(out_frames, device_frames);
+        assert!(fifo.len() <= 48_000 * 2 / 5, "fifo {}", fifo.len());
+    }
+
+    #[test]
+    fn bridge_drives_when_the_device_is_silent() {
+        let mut fifo: VecDeque<f32> = (0..400).map(|_| 0.3f32).collect();
+        let mut chunk: Vec<f32> = Vec::new();
+        mix_bridge(&mut chunk, &mut fifo, false, 1000);
+        assert_eq!(chunk.len(), 400);
+        assert!(fifo.is_empty());
+    }
+}
+
 fn analysis_loop(shared: Arc<Shared>) {
     let mut sr: u32 = 0;
     let mut an: Option<analyzer::Analyzer> = None;
@@ -246,6 +307,8 @@ fn analysis_loop(shared: Arc<Shared>) {
     let mut rec: Option<recorder::Recorder> = None;
     let mut bridge = rm_shm::Reader::open().map_err(|e| log::warn!("bridge: {e}")).ok();
     let mut bridge_buf: Vec<f32> = Vec::new();
+    let mut bridge_fifo: VecDeque<f32> = VecDeque::new(); // plugin audio waiting to be mixed at the device's pace
+    let mut last_device_audio = Instant::now() - Duration::from_secs(10);
     let mut last_plugins_at = Instant::now();
     let mut last_voice = voice::Voice::default();
     let mut last_publish = Instant::now();
@@ -302,18 +365,21 @@ fn analysis_loop(shared: Arc<Shared>) {
             r.data.drain(..).collect()
         };
         // DAW plugin bridge: summed into the device chunk (Auto) or used alone (Plugin).
+        // The device stream owns the clock while it delivers audio; plugin frames wait in a
+        // FIFO and are mixed at the device's pace. (Until 2026-11-17 the chunk was padded
+        // with zeros to the bridge's length whenever the bridge had delivered more frames
+        // this iteration — with 10 ms device callbacks and a 4 ms loop that inserted ~0.8 s
+        // of silence per second, so everything read 1.8× slow: 130 BPM → 72.7, A4 → ~245 Hz.)
         let mode = *shared.mode.lock();
+        if !chunk.is_empty() {
+            last_device_audio = Instant::now();
+        }
         if let (Some(b), true) = (bridge.as_mut(), matches!(mode, Mode::Auto | Mode::Plugin)) {
             bridge_buf.clear();
             b.pull(sr, &mut bridge_buf);
-            if !bridge_buf.is_empty() {
-                if chunk.len() < bridge_buf.len() {
-                    chunk.resize(bridge_buf.len(), 0.0);
-                }
-                for (c, p) in chunk.iter_mut().zip(bridge_buf.iter()) {
-                    *c += *p;
-                }
-            }
+            bridge_fifo.extend(bridge_buf.iter());
+            let device_alive = mode == Mode::Auto && last_device_audio.elapsed() < Duration::from_millis(100);
+            mix_bridge(&mut chunk, &mut bridge_fifo, device_alive, sr as usize * 2 / 5);
             if last_plugins_at.elapsed() >= Duration::from_millis(500) {
                 last_plugins_at = Instant::now();
                 let n = b.live_count();

@@ -52,6 +52,10 @@ export interface Settings {
   alwaysOnTop: boolean;
   /** 투명도 slider target: only the backgrounds (window stays sharp) or the whole window (WS_EX_LAYERED alpha). */
   opacityMode: "bg" | "window";
+  /** Opacity of the empty area behind the tiles (bg mode), 0–100; null = same as `opacity`. */
+  gridOpacity: number | null;
+  /** Main window without the OS frame / shadow (own controls + edge resize, frameless.ts). */
+  frameless: boolean;
   /** Per-module free-form settings, keyed by module id. */
   modules: Record<string, Record<string, unknown>>;
 }
@@ -75,14 +79,14 @@ export function defaultLayout(kind: LayoutKind): Layout {
     const row = (x: number, w: number) => ({ x, y: 0, w, h: 1, on: true });
     return {
       spectrum: row(0, 8), loudness: row(8, 5), levels: row(13, 2), stereo: row(15, 3), scope: row(18, 3), spectrogram: row(21, 3),
-      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false }, player: { x: 0, y: 0, w: 6, h: 1, on: false }, variation: { x: 0, y: 0, w: 5, h: 1, on: false }, subtitles: { x: 0, y: 0, w: 6, h: 1, on: false }, emoji: { x: 0, y: 0, w: 2, h: 1, on: false }, punch: { x: 0, y: 0, w: 5, h: 1, on: false },
+      tract: { x: 0, y: 0, w: 3, h: 1, on: false }, vowelmap: { x: 0, y: 0, w: 3, h: 1, on: false }, pitch: { x: 0, y: 0, w: 4, h: 1, on: false }, waveform: { x: 0, y: 0, w: 6, h: 1, on: false }, dynamics: { x: 0, y: 0, w: 2, h: 1, on: false }, transient: { x: 0, y: 0, w: 4, h: 1, on: false }, stereobands: { x: 0, y: 0, w: 3, h: 1, on: false }, player: { x: 0, y: 0, w: 6, h: 1, on: false }, variation: { x: 0, y: 0, w: 5, h: 1, on: false }, subtitles: { x: 0, y: 0, w: 6, h: 1, on: false }, emoji: { x: 0, y: 0, w: 2, h: 1, on: false }, punch: { x: 0, y: 0, w: 5, h: 1, on: false }, piano: { x: 0, y: 0, w: 6, h: 1, on: false }, cozy: { x: 0, y: 0, w: 4, h: 1, on: false },
     };
   }
   if (kind === "dockv") {
     const col = (y: number, h: number) => ({ x: 0, y, w: 1, h, on: true });
     return {
       spectrum: col(0, 6), loudness: col(6, 6), levels: col(12, 4), stereo: col(16, 4), scope: col(20, 4),
-      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false }, variation: { x: 0, y: 0, w: 1, h: 5, on: false }, subtitles: { x: 0, y: 0, w: 1, h: 4, on: false }, emoji: { x: 0, y: 0, w: 1, h: 3, on: false }, punch: { x: 0, y: 0, w: 1, h: 5, on: false },
+      spectrogram: { x: 0, y: 0, w: 1, h: 4, on: false }, tract: { x: 0, y: 0, w: 1, h: 4, on: false }, vowelmap: { x: 0, y: 0, w: 1, h: 4, on: false }, pitch: { x: 0, y: 0, w: 1, h: 4, on: false }, waveform: { x: 0, y: 0, w: 1, h: 4, on: false }, dynamics: { x: 0, y: 0, w: 1, h: 4, on: false }, transient: { x: 0, y: 0, w: 1, h: 4, on: false }, stereobands: { x: 0, y: 0, w: 1, h: 4, on: false }, player: { x: 0, y: 0, w: 1, h: 4, on: false }, variation: { x: 0, y: 0, w: 1, h: 5, on: false }, subtitles: { x: 0, y: 0, w: 1, h: 4, on: false }, emoji: { x: 0, y: 0, w: 1, h: 3, on: false }, punch: { x: 0, y: 0, w: 1, h: 5, on: false }, piano: { x: 0, y: 0, w: 1, h: 5, on: false }, cozy: { x: 0, y: 0, w: 1, h: 4, on: false },
     };
   }
   // Default arrangement = the author's own layout, baked 2026-11-13 from the running app
@@ -106,6 +110,8 @@ export function defaultLayout(kind: LayoutKind): Layout {
     subtitles: { x: 0, y: 30, w: 12, h: 7, on: true },
     emoji: { x: 20, y: 30, w: 4, h: 7, on: true },
     punch: { x: 12, y: 30, w: 8, h: 7, on: true },
+    piano: { x: 0, y: 37, w: 12, h: 8, on: true },
+    cozy: { x: 12, y: 37, w: 8, h: 8, on: true },
   };
 }
 
@@ -120,9 +126,15 @@ function load<T>(key: string, fallback: T): T {
 }
 
 export const settings: Settings = load(SETTINGS_KEY, {
-  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, opacity: 100, alwaysOnTop: false, opacityMode: "bg", modules: {},
+  sourceMode: "auto", device: null, loudnessTarget: -14, levelMode: "peak", dock: "none", dockSize: 200, opacity: 100, alwaysOnTop: false, opacityMode: "bg", gridOpacity: null, frameless: true, modules: {},
 });
 if (!settings.modules || typeof settings.modules !== "object") settings.modules = {};
+// 2026-11-17 사용자: 테두리 없는 창을 기본으로. Builds of that day saved `frameless: false` while
+// testing — switch everyone to the new default once, then respect the user's own choice.
+{
+  const s = settings as Settings & { framelessDefaultV2?: boolean };
+  if (!s.framelessDefaultV2) { s.frameless = true; s.framelessDefaultV2 = true; try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch { /* ignore */ } }
+}
 
 export const layouts: Record<LayoutKind, Layout> = {
   normal: load(LAYOUT_KEYS.normal, defaultLayout("normal")),

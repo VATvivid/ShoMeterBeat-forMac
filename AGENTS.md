@@ -36,6 +36,15 @@ src/modules/emoji.ts            도트 스프라이트(문자열 → 테마 토�
 src/modules/aitags.ts           YAMNet 태그 그룹 + requestTagging(여러 모듈이 같이 켜고 끄는 공유 스위치)
 src-tauri/src/audio/punch.rs    Fenton-Lee punch 미터: HPSS(미디언) 트랜지언트 → 수정 K-가중 → 옥타브 회귀 가중 → 280 ms 블록 dB; 온셋→히트(어택·프로파일·화려함), PM95 히스토그램. 프레임 헤더 30/31 = momentary punch / TSR
 src/modules/punch.ts            Punch 모듈 UI: 라이브 바 · 마지막 히트 옥타브 프로파일 · 히트 이력(클릭 = 기준) · 세션 PM95/평균
+src-tauri/src/audio/tempo.rs    파일 템포(Player): 플럭스+컬럼 RMS → 액센트 가중 온셋 함수 → 6 s ACF 누적(5탭 확장) → ½칸 lag 하모닉 합 → 넓은 사전(120 BPM ±1옥타브, 자동) → 옥타브 동률 판정(절반 lag가 90 % 이상이면 채택) → 포물선 보정
+src/modules/transient.ts        BPM Checker: tempo.rs와 같은 추정기를 라이브 overview(flux·rms 컬럼)에 적용. 온셋 간격 임시 펄스 BPM(ACF 잠금 전), 비트 점은 온셋에 위상 고정 + 0.5 s 지연 보정. 두 파일은 같이 고친다
+src-tauri/src/audio/melody.rs   주 멜로디 f0 살리언스: 미드 FFT 피크 → f/h(h≤10) 투표(20센트 격자 C2–C7, 0.8^(h−1)·√amp) → 멜로디 음역 사전 → 상위 4후보(Hz, 살리언스). 프레임 꼬리 [2*N_MELODY]
+src/modules/keysynth.ts         건반 클릭 → 피아노 소리(WebAudio 가산 신디, Piano·Pitch 공용). 시스템 출력으로 나가 루프백에 다시 들어온다
+src/modules/cozy.ts             Cozy 모듈: 원화 `public/cozy/corner.png`를 160×96 격자에 깔고 움직이는 부분만 덧그림(`drawArt`: 레벨→램프 글로우, 스펙트럼→라디오 바, 재생 중 음표, 머그 김, 평탄도→창 비, melody→건반, 조용하면 zzz). 타일 = 황혼 배경 위 맞춤, 미니 창 = 투명·모서리 밀착·정수 배율. 원화가 없을 때만 코드로 그린 방/코너(`--cozy-*` 토큰)로 폴백
+public/cozy/corner.png          미니 코너 원화(RGBA, 5:3). `scripts/cozy_asset.py`로 목업에서 잘라 바탕화면 키잉·반전해 만든다. 바꾸면 그림이 바뀌고, cozy.ts drawArt의 캘리브레이션 좌표(램프·라디오·머그·창·건반)만 맞추면 된다
+src/mini.ts                     코지 미니 전용 창(`?win=mini`, 별도 창 기능과 별개, 툴바 🐱 `#mini-btn` 토글·`rm://mini-state`): 투명·프레임 없음·항상 위·작업표시줄 제외, 왼쪽 위 그립 드래그로 크기(5:3, 오른쪽 아래 고정, 240~1600, `rm.mini.v1`에 저장), 보통 `cozy` 모듈 한 타일(설정 공유, `IS_MINI`로 코너 뷰), 끌어서 이동(캔버스가 드래그 영역), 우클릭 설정·닫기, 호버 ✕, 위치·열림 상태 `rm.mini.v1`로 복원. 창 ▾ → 🐱 코지 미니(토글)
+src/dock.ts installDockGrip      도킹 띠 안쪽 가장자리 그립 드래그 = 띠 두께(dockSize) 실시간 조절(두께 선택 UI 없음); grid.ts 도킹 셀은 쓰는 칸 수로 띠를 꽉 채움(최소 28 px, 넘치면 스크롤); 도킹 중 body·타일은 투명도와 무관하게 불투명
+src/modules/piano.ts            Piano 모듈: 멜로디 1후보(모노)로 눌린 건반 표시 + 찍힌 노트가 건반에서 위로 올라가는 롤(미래 노트 없음, 모니터링). 건반 창은 옥타브 단위 자동 추적 / 전체 88건
 ```
 밸리스틱(릴리스, 피크 홀드, 스무딩)은 전부 프론트에서 한다. Rust는 순간값만 보낸다.
 

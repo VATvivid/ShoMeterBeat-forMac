@@ -18,7 +18,9 @@
         "minWidth": 640,
         "minHeight": 400,
         "theme": "Dark",
-        "transparent": true
+        "transparent": true,
+        "decorations": false,
+        "shadow": false
       }
     ],
     "security": {
@@ -31,6 +33,8 @@
       "plugins/**/*",
       "models/yamnet.onnx",
       "models/yamnet_class_map.csv",
+      "models/efficientat_mn10_as.onnx",
+      "models/efficientat_class_map.csv",
       "models/onnxruntime.dll",
       "models/onnxruntime_providers_shared.dll",
       "models/ORT_LICENSE",

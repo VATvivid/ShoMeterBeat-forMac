@@ -1,20 +1,61 @@
-// Helpers for AI (YAMNet / AudioSet) tags: coarse groups for filtering and colours,
-// and a shared on/off so several modules can request tagging without fighting.
+// Helpers for AI (AudioSet) tags: coarse groups for filtering and colours, a shared on/off so
+// several modules can request tagging without fighting, and the shared model choice.
 import { getSource } from "../engine/instance";
+import type { SettingItem } from "./types";
 
 const owners = new Map<string, number>();
 let sent = "";
-/** Request (or release) YAMNet tagging for `owner`; the engine runs at the shortest interval anyone asked for. */
+/** Request (or release) AI tagging for `owner`; the engine runs at the shortest interval anyone asked for. */
 export function requestTagging(owner: string, on: boolean, intervalMs = 1000) {
   if (on) owners.set(owner, intervalMs); else owners.delete(owner);
   const src = getSource();
   if (!src) return;
+  syncModel();
   const enabled = owners.size > 0;
   const interval = enabled ? Math.min(...owners.values()) : 1000;
   const key = `${enabled}:${interval}`;
   if (key === sent) return;
   sent = key;
   src.setTagging(enabled, interval).catch(() => {});
+  if (enabled) refreshModels();
+}
+
+// ---- model choice (one engine-wide tagger; every window shares localStorage) --------------
+/** Selectable models, newest first. `id` matches src-tauri/src/audio/tagger.rs MODELS. */
+export const TAG_MODELS: { id: string; label: string }[] = [
+  { id: "efficientat", label: "EfficientAT mn10 (2023 · MIT · 더 정확)" },
+  { id: "yamnet", label: "YAMNet (2019 · Apache-2.0)" },
+];
+const MODEL_KEY = "rm.tagModel.v1";
+let available: string[] | null = null;
+let sentModel = "";
+export function tagModel(): string {
+  try { return localStorage.getItem(MODEL_KEY) || "yamnet"; } catch { return "yamnet"; }
+}
+export function tagModelLabel(id = tagModel()): string {
+  return (TAG_MODELS.find((m) => m.id === id)?.label ?? id).replace(/\s*\(.*$/, "");
+}
+function syncModel() {
+  const m = tagModel();
+  if (m === sentModel) return;
+  sentModel = m;
+  getSource()?.setTagModel(m).catch(() => {});
+}
+function refreshModels() {
+  getSource()?.tagStatus().then((s) => { if (s.models) available = s.models; }).catch(() => {});
+}
+/** Right-click menu row "AI 모델" — the same choice from every module that uses AI tags. */
+export function tagModelSetting(): SettingItem {
+  refreshModels();
+  return {
+    type: "select", label: "AI 모델", value: tagModel(),
+    options: TAG_MODELS.map((m) => ({ value: m.id, label: available && !available.includes(m.id) ? `${m.label} — 파일 없음` : m.label })),
+    onChange: (v) => { try { localStorage.setItem(MODEL_KEY, v); } catch { /* ignore */ } syncModel(); },
+  };
+}
+// another window changed the model: follow it
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", (e) => { if (e.key === MODEL_KEY) syncModel(); });
 }
 export type TagGroup = "voice" | "music" | "sfx" | "other";
 

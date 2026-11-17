@@ -3,7 +3,7 @@ import { font, theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
 import { getSource } from "../engine/instance";
-import { requestTagging } from "./aitags";
+import { requestTagging, tagModelLabel, tagModelSetting } from "./aitags";
 import { nearestVowel } from "./vowels";
 import type { AiTag } from "../engine/source";
 
@@ -178,7 +178,8 @@ export class EmojiModule implements Module {
 
   settings(): SettingItem[] {
     return [
-      { type: "select", label: "판별 방식", value: this.mode, options: [{ value: "rule", label: "규칙 (가벼움, 모델 없음)" }, { value: "ai", label: "AI (YAMNet 태그)" }], onChange: (v) => setModSetting(this.id, "mode", v) },
+      { type: "select", label: "판별 방식", value: this.mode, options: [{ value: "rule", label: "규칙 (가벼움, 모델 없음)" }, { value: "ai", label: `AI (${tagModelLabel()} 태그)` }], onChange: (v) => setModSetting(this.id, "mode", v) },
+      tagModelSetting(),
       { type: "toggle", label: "이름 표시", value: this.showLabel, onChange: (v) => setModSetting(this.id, "label", v) },
     ];
   }

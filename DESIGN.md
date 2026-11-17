@@ -37,6 +37,7 @@ awesome-design-md DESIGN.md structure. Every UI change reads this file first.
 | Danger | `--clip` | `#ff4d5e` | clip indicator, over-target, errors |
 | Target line | `--target` | `#f2d16b` | loudness target reference (-14 / -23 LUFS) |
 | Spectrogram map | `--map-*` | `#0e0f12 → #1b2a6b → #2eddc4 → #f2f5a0` | 4-stop ramp, dark → cool → signal → hot |
+| Cozy scene | `--cozy-*` | warm pastels: cream wall `#ead6b6`, wood `#c08f5e`, outline `#3d2b24`, sage `#8fae8b`, brass `#e3b45c`, rust `#cf6f49`, dusk sky `#f4c9a4 → #cfa5cc → #6d86c6`, cat `#f7d9a4` | only the Cozy module (재미용). Deliberately outside the dark meter palette — a warm, outlined, pastel room after the user's Healimals reference (2026-11-17); never used by meters or chrome |
 
 Rules: exactly one cool signal accent per trace family; the warm accent is only
 for peaks, holds and integrated values; red is only for clipping or exceeding a

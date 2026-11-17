@@ -17,6 +17,8 @@ import { VariationMapModule } from "./variationmap";
 import { SubtitlesModule } from "./subtitles";
 import { EmojiModule } from "./emoji";
 import { PunchModule } from "./punch";
+import { PianoModule } from "./piano";
+import { CozyModule } from "./cozy";
 import type { LayoutKind } from "../state";
 
 /** Registry: id → factory. Order here is the order in the "모듈" menu. */
@@ -39,6 +41,8 @@ export const MODULES: Record<string, ModuleFactory> = {
   subtitles: () => new SubtitlesModule(),
   emoji: () => new EmojiModule(),
   punch: () => new PunchModule(),
+  piano: () => new PianoModule(),
+  cozy: () => new CozyModule(),
 };
 
 export const MODULE_TITLES: Record<string, string> = {
@@ -60,6 +64,8 @@ export const MODULE_TITLES: Record<string, string> = {
   subtitles: "Subtitles (자막 · whisper)",
   emoji: "Emoji (도트 · 재미용)",
   punch: "Punch Machine (타격감 점수)",
+  piano: "Piano (건반 · 멜로디)",
+  cozy: "Cozy (코지 룸 · 재미용)",
 };
 
 /** A layout key is a module id, or `<module>#<n>` for an extra instance of the same module. */
@@ -83,6 +89,6 @@ export function minSize(key: string, kind: LayoutKind): { w: number; h: number }
   const id = baseOf(key);
   if (kind === "dockh") return { w: id === "levels" ? 1 : 2, h: 1 };
   if (kind === "dockv") return { w: 1, h: 2 };
-  if (id === "levels" || id === "dynamics" || id === "emoji") return { w: 2, h: 3 };
+  if (id === "levels" || id === "dynamics" || id === "emoji" || id === "cozy") return { w: 2, h: 3 };
   return { w: 3, h: 3 };
 }

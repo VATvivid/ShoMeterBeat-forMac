@@ -5,12 +5,14 @@ import { listen } from "@tauri-apps/api/event";
 import type { Frame } from "./engine/frame";
 import { inTauri, type Source } from "./engine/source";
 import type { Grid } from "./layout/grid";
-import { applyDock, releaseDockReservation } from "./dock";
+import { applyDock, installDockGrip, releaseDockReservation } from "./dock";
+import { installFrameless, setFrameless } from "./frameless";
 import { buildModulesPanel, closeAllMenus, wireMenu } from "./modulespanel";
 import { applyPresetState, capturePreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
 import { layoutKindFor, onSettingsSynced, resetLayout, saveSettings, settings, type DockMode } from "./state";
 import { notice, noticeHeld } from "./status";
 import { applyOpacity, closePop, createPop, flashAll, loadPops, popTitle, restorePops, setAlwaysOnTop } from "./windows";
+import { miniState, restoreMini, toggleMini } from "./mini";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -59,21 +61,16 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       row.append(rb, document.createTextNode(d.label));
       dockPanel.appendChild(row);
     }
-    const sizeRow = document.createElement("label");
-    sizeRow.className = "row";
-    const sel = document.createElement("select");
-    sel.className = "mini";
-    for (const px of [120, 160, 200, 260, 320, 400]) {
-      const o = document.createElement("option");
-      o.value = String(px); o.textContent = `${px}px`; o.selected = settings.dockSize === px;
-      sel.appendChild(o);
-    }
-    sel.addEventListener("change", () => { settings.dockSize = Number(sel.value); saveSettings(); if (settings.dock !== "none") setDock(settings.dock); });
-    sizeRow.append(document.createTextNode("띠 두께 "), sel);
-    dockPanel.appendChild(sizeRow);
+    // Thickness is set by dragging the strip's inner edge (dock.ts installDockGrip) — no picker (2026-11-17 사용자).
+    const hint = document.createElement("div");
+    hint.className = "ctx-hint";
+    hint.textContent = `띠 두께 ${settings.dockSize}px — 띠 안쪽 가장자리를 끌어 조절`;
+    dockPanel.appendChild(hint);
   }
   buildDockPanel();
   wireMenu(dockBtn, dockPanel);
+  installDockGrip();
+  installFrameless();
   if (settings.dock !== "none") setDock(settings.dock);
   else releaseDockReservation();
 
@@ -88,14 +85,33 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     pin.addEventListener("change", () => { settings.alwaysOnTop = pin.checked; saveSettings(); if (settings.dock === "none") setAlwaysOnTop(pin.checked); });
     pinRow.append(pin, document.createTextNode("📌 메인 창 항상 위에"));
     winPanel.appendChild(pinRow);
+    const frameRow = document.createElement("label");
+    const frame = document.createElement("input");
+    frame.type = "checkbox"; frame.checked = settings.frameless;
+    frame.title = "Windows 제목 표시줄·테두리·그림자 없이 — 툴바를 끌어 이동(두 번 클릭 = 최대화), 오른쪽 끝 – □ ✕, 가장자리를 끌어 크기 조절";
+    frame.addEventListener("change", () => { setFrameless(frame.checked).catch((e) => notice(`테두리 전환 실패: ${String(e)}`, "err")); });
+    frameRow.append(frame, document.createTextNode("▢ 테두리 없는 창 (그림자 없음)"));
+    winPanel.appendChild(frameRow);
     const opRow = document.createElement("label");
     opRow.className = "row";
     const op = document.createElement("input");
     op.type = "range"; op.min = "0"; op.max = "100"; op.step = "5"; op.value = String(settings.opacity);
     const opVal = document.createElement("span"); opVal.className = "ctx-val"; opVal.textContent = `${settings.opacity}%`;
-    op.addEventListener("input", () => { settings.opacity = Number(op.value); saveSettings(); opVal.textContent = `${op.value}%`; applyOpacity(settings.opacity); });
+    op.addEventListener("input", () => { settings.opacity = Number(op.value); saveSettings(); opVal.textContent = `${op.value}%`; applyOpacity(settings.opacity); if (settings.gridOpacity === null) { gop.value = op.value; gopVal.textContent = `${op.value}% (같음)`; } });
     opRow.append(document.createTextNode("투명도 "), op, opVal);
     winPanel.appendChild(opRow);
+    // 빈 영역(타일이 없는 그리드·창 바탕)만 따로 — 0이면 타일만 떠 있는 것처럼 보인다 (2026-11-17 사용자)
+    const gopRow = document.createElement("label");
+    gopRow.className = "row";
+    const gop = document.createElement("input");
+    gop.type = "range"; gop.min = "0"; gop.max = "100"; gop.step = "5"; gop.value = String(settings.gridOpacity ?? settings.opacity);
+    const gopVal = document.createElement("span"); gopVal.className = "ctx-val"; gopVal.textContent = settings.gridOpacity === null ? `${settings.opacity}% (같음)` : `${settings.gridOpacity}%`;
+    gop.title = "타일이 없는 빈 영역(창 바탕)의 투명도. 투명도와 따로 둘 수 있다 — 0 %면 타일만 바탕화면 위에 떠 있는 것처럼 보인다";
+    gop.addEventListener("input", () => { settings.gridOpacity = Number(gop.value); saveSettings(); gopVal.textContent = `${gop.value}%`; applyOpacity(settings.opacity); });
+    const gopReset = document.createElement("button"); gopReset.className = "btn icon"; gopReset.textContent = "="; gopReset.title = "투명도와 같게";
+    gopReset.addEventListener("click", () => { settings.gridOpacity = null; saveSettings(); gop.value = String(settings.opacity); gopVal.textContent = `${settings.opacity}% (같음)`; applyOpacity(settings.opacity); });
+    gopRow.append(document.createTextNode("빈 영역 "), gop, gopVal, gopReset);
+    winPanel.appendChild(gopRow);
     const modeRow = document.createElement("label");
     modeRow.className = "row";
     const modeSel = document.createElement("select");
@@ -136,6 +152,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     listen<{ label: string }>("rm://pop-close-request", (e) => closePop(e.payload.label, grid).then(buildWinPanel)).catch(() => {});
     listen("rm://pop-closed", () => buildWinPanel()).catch(() => {});
     restorePops().catch((e) => console.error(e));
+    restoreMini().catch((e) => console.error(e));
   }
   onSettingsSynced(() => { /* per-module settings changed in a pop-out: modules read them live */ });
 
@@ -264,10 +281,11 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     }
   }
   recBtn.addEventListener("click", toggleRecording);
+  // Recording starts only from the ● 녹음 button — the space-bar toggle was removed
+  // (2026-11-17: it started recordings nobody asked for while the window had focus).
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement) return;
     if (e.key === "r" || e.key === "R") source.resetLoudness();
-    if (e.key === " ") { e.preventDefault(); toggleRecording(); }
   });
 
   // ---- device select ---------------------------------------------------------
@@ -319,6 +337,13 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       }
     } catch { /* ignore */ }
   }
+  // ---- 🐱 cozy mini toggle (toolbar, right of 플러그인 설치) -------------------------
+  const miniBtn = $<HTMLButtonElement>("mini-btn");
+  const paintMini = () => { const on = miniState().open; miniBtn.classList.toggle("on", on); miniBtn.textContent = on ? "😺" : "🐱"; miniBtn.title = on ? "코지 미니 끄기" : "코지 미니 켜기 — 화면 오른쪽 아래, 작업 표시줄 위에 배경 없는 고양이 코너 (끌어서 이동, 우클릭 설정)"; };
+  paintMini();
+  miniBtn.addEventListener("click", () => { miniBtn.disabled = true; toggleMini().catch((e) => notice(`코지 미니 실패: ${String(e)}`, "err")).finally(() => { miniBtn.disabled = false; paintMini(); }); });
+  if (inTauri) listen("rm://mini-state", () => paintMini()).catch(() => {});
+
   $("install-plugin-btn").addEventListener("click", async () => {
     try {
       const paths = await source.installPlugins();

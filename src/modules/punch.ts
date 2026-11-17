@@ -576,7 +576,7 @@ export class PunchModule implements Module {
       }
     }
     ctx.translate(cx + dx, cy);
-    ctx.scale(-sx, sy); // sprite mirrored: the fist faces right
+    ctx.scale(sx, sy); // sprite as drawn (2026-11-17 사용자: 자리는 왼쪽 그대로, 그림만 반전); the thrust still goes right
     if (pal.length) {
       // 화려함 glow: one colour (40–50), four colours (50–60), rotating rainbow (60+); rays from 42,
       // more of them and faster the higher the index

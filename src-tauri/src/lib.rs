@@ -283,8 +283,8 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
     let peak_db = if peak > 1e-9 { 20.0 * peak.log10() } else { -120.0 };
     let rms_db = if rms > 1e-9 { 20.0 * rms.log10() } else { -120.0 };
     let mono = d.mono();
-    let flux = audio::tempo::flux_columns(&mono, d.sample_rate);
-    let t = audio::tempo::estimate(&flux, prior_bpm.unwrap_or(110.0));
+    let onsets = audio::tempo::onset_columns(&mono, d.sample_rate);
+    let t = audio::tempo::estimate(&onsets, prior_bpm.filter(|b| *b > 0.0));
     Ok(FileAnalysis {
         duration: d.frames() as f32 / d.sample_rate as f32,
         sample_rate: d.sample_rate,
@@ -298,7 +298,7 @@ fn analyze_file(path: String, prior_bpm: Option<f32>) -> Result<FileAnalysis, St
         bpm: t.bpm,
         bpm_confidence: t.confidence,
         bpm_agreement: t.agreement,
-        tempo_segments: audio::tempo::segments(&flux, prior_bpm.unwrap_or(110.0)),
+        tempo_segments: audio::tempo::segments(&onsets, prior_bpm.filter(|b| *b > 0.0)),
     })
 }
 
@@ -323,6 +323,12 @@ fn set_tagging(engine: State<Engine>, enabled: bool, interval_ms: Option<u32>) {
 #[tauri::command]
 fn tag_status(engine: State<Engine>) -> audio::tagger::TagStatus {
     engine.0.tagger.lock().status.clone()
+}
+
+/// Selects the AI tagging model ("yamnet" | "efficientat"); the tagger thread reloads it.
+#[tauri::command]
+fn set_tag_model(engine: State<Engine>, model: String) {
+    engine.0.tagger.lock().set_model(&model);
 }
 
 // ---- subtitles (whisper) ----------------------------------------------------------
@@ -669,7 +675,7 @@ pub fn run() {
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
-            events_since, set_onset_k, tags_since, set_tagging, tag_status, subtitles_since, set_subtitles, subtitle_status,
+            events_since, set_onset_k, tags_since, set_tagging, tag_status, set_tag_model, subtitles_since, set_subtitles, subtitle_status,
             punch_hits_since, punch_status, punch_reset,
             set_opacity, set_appbar, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])

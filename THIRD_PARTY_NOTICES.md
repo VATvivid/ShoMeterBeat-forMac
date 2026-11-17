@@ -53,6 +53,18 @@ Both are Apache License 2.0 (Copyright Google LLC). The files are downloaded by
 `scripts/fetch_models.py` and shipped as app resources. Inference runs locally with
 ONNX Runtime (MIT, Microsoft) via the `ort` crate.
 
+## EfficientAT (AI sound-event tagging model, selectable)
+
+`models/efficientat_mn10_as.onnx` is exported by `scripts/export_efficientat.py` from the
+EfficientAT checkpoint `mn10_as_mAP_471.pt` (https://github.com/fschmid56/EfficientAT,
+MIT License, Copyright (c) 2022 Florian Schmid; F. Schmid, K. Koutini, G. Widmer, "Efficient
+Large-scale Audio Tagging via Transformer-to-CNN Knowledge Distillation", ICASSP 2023). The
+log-mel front end of the repository's `AugmentMelSTFT` (eval mode) is folded into the graph.
+`efficientat_class_map.csv` is the repository's `metadata/class_labels_indices.csv`.
+
+AudioSet class names (both models): Google AudioSet ontology, CC BY-SA 4.0
+(https://research.google.com/audioset/). Annotations CC BY 4.0.
+
 ## whisper.cpp (live subtitles)
 
 Speech recognition uses whisper.cpp through the `whisper-rs` crate (MIT) with ggml

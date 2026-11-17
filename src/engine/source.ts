@@ -44,6 +44,8 @@ export interface Source {
   tagsSince(after: number): Promise<AiTag[]>;
   setTagging(enabled: boolean, intervalMs?: number): Promise<void>;
   tagStatus(): Promise<TagStatus>;
+  /** Selects the AI tagging model ("yamnet" | "efficientat"). */
+  setTagModel(model: string): Promise<void>;
   subtitlesSince(after: number): Promise<Subtitle[]>;
   setSubtitles(enabled: boolean, lang: string, model: string): Promise<void>;
   subtitleStatus(): Promise<SubStatus>;
@@ -60,7 +62,7 @@ export interface Subtitle { seq: number; t0: number; t1: number; text: string; l
 export interface SubStatus { enabled: boolean; model: string; loaded: boolean; loading: boolean; lang: string; queue: number; last_ms: number; error: string | null; models_dir: string }
 
 export interface AiTag { seq: number; t: number; top: [number, string, number][] }
-export interface TagStatus { available: boolean; enabled: boolean; interval_ms: number; last_ms: number; error: string | null }
+export interface TagStatus { available: boolean; enabled: boolean; interval_ms: number; last_ms: number; error: string | null; model?: string; models?: string[] }
 
 export interface SoundEvent { seq: number; t: number; peak_db: number; features: number[] }
 
@@ -119,6 +121,7 @@ class TauriSource implements Source {
   tagsSince(after: number) { return invoke<AiTag[]>("tags_since", { after }); }
   setTagging(enabled: boolean, intervalMs?: number) { return invoke<void>("set_tagging", { enabled, intervalMs }); }
   tagStatus() { return invoke<TagStatus>("tag_status"); }
+  setTagModel(model: string) { return invoke<void>("set_tag_model", { model }); }
   subtitlesSince(after: number) { return invoke<Subtitle[]>("subtitles_since", { after }); }
   setSubtitles(enabled: boolean, lang: string, model: string) { return invoke<void>("set_subtitles", { enabled, lang, model }); }
   subtitleStatus() { return invoke<SubStatus>("subtitle_status"); }
@@ -190,6 +193,10 @@ class MockSource implements Source {
       const vib = 0.25 * Math.sin(this.t * 2 * Math.PI * 5.5);
       f.f0 = 440 * Math.pow(2, (seq[step] + vib - 69) / 12);
       if (this.t % 4 > 3.4) f.voiced = 0.1;
+      // melody candidates for the Piano: the same line, a weaker octave-up second candidate
+      const resting = this.t % 4 > 3.4;
+      f.melody[0] = resting ? 0 : f.f0; f.melody[1] = resting ? 0 : 0.7;
+      f.melody[2] = resting ? 0 : f.f0 * 2; f.melody[3] = resting ? 0 : 0.3;
     }
     // Breath in the gaps: noisy, bright, a short burst.
     const gapT = this.t % 4;
@@ -274,7 +281,9 @@ class MockSource implements Source {
   }
   async setOnsetK() {}
   async setTagging(enabled: boolean) { this.tagging = enabled; }
-  async tagStatus(): Promise<TagStatus> { return { available: true, enabled: this.tagging, interval_ms: 500, last_ms: 12, error: null }; }
+  private tagModel = "yamnet";
+  async tagStatus(): Promise<TagStatus> { return { available: true, enabled: this.tagging, interval_ms: 500, last_ms: 12, error: null, model: this.tagModel, models: ["yamnet", "efficientat"] }; }
+  async setTagModel(model: string) { this.tagModel = model; }
   async tagsSince(after: number): Promise<AiTag[]> {
     if (!this.tagging) return [];
     const out: AiTag[] = [];

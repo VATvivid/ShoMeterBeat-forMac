@@ -25,6 +25,8 @@
 //!                         bands: <150 Hz, 150–600, 600–2.5k, 2.5k–20k
 //! +2*N_BANDS              spectrum M  [N_SPEC] dB   (mid = (L+R)/2)
 //! +N_SPEC                 spectrum S  [N_SPEC] dB   (side = (L−R)/2)
+//! +N_SPEC                 melody      [2*N_MELODY]: (Hz, salience 0..1) per candidate,
+//!                         strongest first (0 Hz = none) — see melody.rs
 //! ```
 
 pub const MAGIC: f32 = 7331.0;
@@ -34,6 +36,7 @@ pub const N_SCOPE: usize = 1024;
 pub const N_LISSA: usize = 512;
 pub const N_ENV: usize = 128;
 pub const N_BANDS: usize = 4;
+pub const N_MELODY: usize = super::melody::N_MELODY;
 pub const BAND_EDGES: [f32; 5] = [20.0, 150.0, 600.0, 2500.0, 20000.0];
 pub const SILENCE_DB: f32 = -120.0;
 
@@ -73,6 +76,8 @@ pub struct Frame {
     pub bands: Vec<f32>,
     pub spectrum_m: Vec<f32>,
     pub spectrum_s: Vec<f32>,
+    /// (Hz, salience) × N_MELODY, strongest first — see melody.rs.
+    pub melody: Vec<f32>,
 }
 
 impl Default for Frame {
@@ -112,13 +117,14 @@ impl Default for Frame {
             bands: vec![0.0; 2 * N_BANDS],
             spectrum_m: vec![SILENCE_DB; N_SPEC],
             spectrum_s: vec![SILENCE_DB; N_SPEC],
+            melody: vec![0.0; 2 * N_MELODY],
         }
     }
 }
 
 impl Frame {
     pub fn pack(&self) -> Vec<u8> {
-        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC;
+        let total = HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC + 2 * N_MELODY;
         let mut v: Vec<f32> = Vec::with_capacity(total);
         v.extend_from_slice(&[
             MAGIC,
@@ -164,6 +170,7 @@ impl Frame {
         v.extend_from_slice(&self.bands);
         v.extend_from_slice(&self.spectrum_m);
         v.extend_from_slice(&self.spectrum_s);
+        v.extend_from_slice(&self.melody);
         debug_assert_eq!(v.len(), total);
         let mut bytes = Vec::with_capacity(total * 4);
         for x in v {
@@ -183,7 +190,7 @@ mod tests {
         f.seq = 9;
         f.peak = [-3.0, -6.0];
         let b = f.pack();
-        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC));
+        assert_eq!(b.len(), 4 * (HEADER + 2 * N_SPEC + 2 * N_SCOPE + 2 * N_LISSA + N_ENV + 2 * N_BANDS + 2 * N_SPEC + 2 * N_MELODY));
         let at = |i: usize| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
         assert_eq!(at(0), MAGIC);
         assert_eq!(at(1), 9.0);

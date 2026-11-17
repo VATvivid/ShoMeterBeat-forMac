@@ -11,6 +11,7 @@ import type { Frame } from "../engine/frame";
 import { baseOf, isInstance, minSize, MODULES, titleOf } from "../modules";
 import type { Module } from "../modules/types";
 import { effectiveDims, GRID_DIMS, gridExtra, layouts, saveLayout, setGridExtra, type Layout, type LayoutKind } from "../state";
+// (GRID_DIMS is still used by resolvePush for the free grid's base width)
 import { showContextMenu, type MenuAction } from "./contextmenu";
 
 interface Tile {
@@ -24,6 +25,8 @@ interface Tile {
 }
 
 const GUTTER = 6;
+/** Smallest strip cell (px) before a dock strip starts scrolling instead of squeezing. */
+const MIN_STRIP_CELL = 28;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 const overlap = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
@@ -176,12 +179,19 @@ export class Grid {
   private cell() {
     const { cols, rows } = this.dims();
     const W = this.root.clientWidth, H = this.root.clientHeight;
-    // Dock strips keep the base cell size and scroll (the window is one thin strip; more
-    // modules must not squeeze the others). The free grid keeps fitting the window.
-    const base = GRID_DIMS[this.kind];
-    const fitCols = this.kind === "dockh" ? Math.min(cols, base.cols) : cols;
-    const fitRows = this.kind === "dockv" ? Math.min(rows, base.rows) : rows;
-    return { cw: (W - GUTTER * (fitCols - 1)) / fitCols, ch: (H - GUTTER * (fitRows - 1)) / fitRows, cols, rows };
+    // Dock strips: the tiles fill the strip exactly (cells stretch over the columns in
+    // use, so no desktop shows through at the ends — 2026-11-17 사용자) down to a minimum
+    // cell size, beyond which the strip scrolls. The free grid keeps fitting the window.
+    if (this.kind === "dockh" || this.kind === "dockv") {
+      const rects = this.preview ? Object.values(this.preview) : Object.values(this.layout).filter((r) => r.on);
+      if (this.kind === "dockh") {
+        const used = Math.max(1, ...rects.map((r) => r.x + r.w));
+        return { cw: Math.max(MIN_STRIP_CELL, (W - GUTTER * (used - 1)) / used), ch: H, cols, rows };
+      }
+      const used = Math.max(1, ...rects.map((r) => r.y + r.h));
+      return { cw: W, ch: Math.max(MIN_STRIP_CELL, (H - GUTTER * (used - 1)) / used), cols, rows };
+    }
+    return { cw: (W - GUTTER * (cols - 1)) / cols, ch: (H - GUTTER * (rows - 1)) / rows, cols, rows };
   }
 
   private rectPx(r: Rect) {

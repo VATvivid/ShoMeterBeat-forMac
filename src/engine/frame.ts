@@ -6,6 +6,7 @@ export const N_SCOPE = 1024;
 export const N_LISSA = 512;
 export const N_ENV = 128;
 export const N_BANDS = 4;
+export const N_MELODY = 4;
 export const BAND_LABELS = ["Low <150", "Low-mid 150–600", "Mid 600–2.5k", "High 2.5k+"];
 export const ENV_MAX_HZ = 5000;
 export const SILENCE_DB = -120;
@@ -54,6 +55,8 @@ export interface Frame {
   /** Mid / side spectra (dB, N_SPEC log points) for the Spectrum's MS mode. */
   specM: Float32Array;
   specS: Float32Array;
+  /** (Hz, salience 0..1) × N_MELODY predominant-f0 candidates, strongest first (0 Hz = none) — melody.rs. */
+  melody: Float32Array;
 }
 
 export function pointFreq(i: number): number {
@@ -107,6 +110,7 @@ export function parseFrame(buf: ArrayBuffer): Frame | null {
     bands: v.length >= o + 2 * N_BANDS ? take(2 * N_BANDS) : new Float32Array(2 * N_BANDS),
     specM: v.length >= o + N_SPEC ? take(N_SPEC) : new Float32Array(N_SPEC).fill(SILENCE_DB),
     specS: v.length >= o + N_SPEC ? take(N_SPEC) : new Float32Array(N_SPEC).fill(SILENCE_DB),
+    melody: v.length >= o + 2 * N_MELODY ? take(2 * N_MELODY) : new Float32Array(2 * N_MELODY),
   };
 }
 
@@ -122,5 +126,6 @@ export function emptyFrame(): Frame {
     envelope: new Float32Array(N_ENV).fill(SILENCE_DB),
     bands: new Float32Array(2 * N_BANDS),
     specM: new Float32Array(N_SPEC).fill(SILENCE_DB), specS: new Float32Array(N_SPEC).fill(SILENCE_DB),
+    melody: new Float32Array(2 * N_MELODY),
   };
 }
