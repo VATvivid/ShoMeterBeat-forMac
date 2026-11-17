@@ -95,6 +95,71 @@ export class CozyModule implements Module {
   private swayPh = [Math.random() * 6.28, Math.random() * 6.28];
   /** Window light per band (0..1, slow attack / slower release so beams breathe rather than flicker). */
   private light = new Float32Array(5);
+  private bandMean = new Float32Array(5);
+  /** Sky pixels of the corner art (public/cozy/corner_sky.png, white on transparent). */
+  private skyMask: HTMLImageElement | null = null;
+  private skyOk = false;
+  private tintCanvas: HTMLCanvasElement | null = null;
+  /** Sky-cycle offset in cycle steps: drifts warm (+) with bright sound, cool (−) with dark sound. */
+  private skyBias = 0;
+
+  /**
+   * Play poses (2026-11-17 사용자: 소리가 나는 동안 가끔 랜덤 포즈 — 뒤집어 실타래 놀기 등 3개, 이어서
+   * 사용자 그림의 앉아 조는 고양이 1개 추가). Optional pictures public/cozy/corner_play1.png … corner_play4.png, same composition as corner.png
+   * (only the cat differs). While sound plays, every 12–25 s the cat switches to a random pose
+   * (or back to the base picture) with a 0.8 s cross-fade; when the sound stops it settles back
+   * on the base picture before dozing off. Missing files are simply never picked.
+   */
+  private poses: (HTMLImageElement | null)[] = [null, null, null, null];
+  private poseSky: (HTMLImageElement | null)[] = [null, null, null, null];
+  private poseSkyOk = [false, false, false, false];
+  /** Sky mask for what is on screen: the play pose's own mask once its cross-fade is past halfway. */
+  private currentSky(): HTMLImageElement {
+    const i = this.poseFade < 0.5 ? this.poseFrom : this.poseTo;
+    return i >= 0 && this.poseSkyOk[i] && this.poseSky[i] ? this.poseSky[i]! : this.skyMask!;
+  }
+  private posesOk = [false, false, false, false];
+  private poseFrom = -1;               // −1 = base picture
+  private poseTo = -1;
+  private poseFade = 1;                // 0 → 1 while cross-fading from → to
+  private nextPoseAt = 15;
+  private poseImg(i: number): HTMLImageElement {
+    return i >= 0 && this.posesOk[i] && this.poses[i] ? this.poses[i]! : this.art!;
+  }
+  private updatePose(dt: number, playing: boolean) {
+    if (this.poseFade < 1) {
+      this.poseFade = Math.min(1, this.poseFade + dt / 0.8);
+      if (this.poseFade >= 1) this.poseFrom = this.poseTo;
+      return;
+    }
+    const avail = this.posesOk.map((ok, i) => (ok ? i : -2)).filter((i) => i >= 0);
+    const want = (target: number) => { if (target !== this.poseFrom) { this.poseTo = target; this.poseFade = 0; } };
+    if (!playing || this.awake < 0.6) { if (this.poseFrom !== -1) want(-1); this.nextPoseAt = this.t + 8 + Math.random() * 10; return; }
+    if (!avail.length || this.t < this.nextPoseAt) return;
+    const choices = [-1, ...avail].filter((i) => i !== this.poseFrom);
+    want(choices[Math.floor(Math.random() * choices.length)]);
+    this.nextPoseAt = this.t + 12 + Math.random() * 13;
+  }
+
+  /** Paints `color` over the sky pixels only, with the given composite and alpha. */
+  private tintSky(ctx: CanvasRenderingContext2D, color: string, op: GlobalCompositeOperation, alpha: number, ox: number, oy: number, s: number) {
+    const m = this.currentSky();
+    let c = this.tintCanvas;
+    if (!c) { c = document.createElement("canvas"); c.width = m.naturalWidth || 424; c.height = m.naturalHeight || 257; this.tintCanvas = c; }
+    const t = c.getContext("2d");
+    if (!t) return;
+    t.globalCompositeOperation = "source-over";
+    t.clearRect(0, 0, c.width, c.height);
+    t.fillStyle = color; t.fillRect(0, 0, c.width, c.height);
+    t.globalCompositeOperation = "destination-in";
+    t.drawImage(m, 0, 0);
+    ctx.save();
+    ctx.globalCompositeOperation = op;
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(c, ox, oy, MINI_W * s, MINI_H * s);
+    ctx.restore();
+  }
 
   constructor() {
     if (typeof Image !== "undefined") {
@@ -113,6 +178,24 @@ export class CozyModule implements Module {
       pl.onerror = () => { this.plantOk = false; };
       pl.src = "/cozy/corner_plant.png";
       this.plantArt = pl;
+      const sk = new Image();
+      sk.onload = () => { this.skyOk = sk.naturalWidth > 0; };
+      sk.onerror = () => { this.skyOk = false; };
+      sk.src = "/cozy/corner_sky.png";
+      this.skyMask = sk;
+      for (let i = 0; i < 4; i++) {
+        const p = new Image();
+        p.onload = () => { this.posesOk[i] = p.naturalWidth > 0; };
+        p.onerror = () => { this.posesOk[i] = false; };
+        p.src = `/cozy/corner_play${i + 1}.png`;
+        this.poses[i] = p;
+        // each play pose has its own sky mask (the old cat's place is sky there, the new cat is not)
+        const m = new Image();
+        m.onload = () => { this.poseSkyOk[i] = m.naturalWidth > 0; };
+        m.onerror = () => { this.poseSkyOk[i] = false; };
+        m.src = `/cozy/corner_play${i + 1}_sky.png`;
+        this.poseSky[i] = m;
+      }
     }
   }
 
@@ -164,11 +247,21 @@ export class CozyModule implements Module {
     for (let i = 0; i < 5; i++) {
       const v = Math.max(0, Math.min(1, (this.bandDb(f, edges[i][0], edges[i][1]) + 60) / 45));
       this.bands[i] += (v - this.bands[i]) * Math.min(1, dt * (v > this.bands[i] ? 14 : 4));
-      this.light[i] += ((playing ? v : 0) - this.light[i]) * Math.min(1, dt * (v > this.light[i] ? 3 : 0.9));
+      // window light follows *change* in each band, not only its level: a slow mean per band, and the
+      // beam = base + 2.5 × (v − mean), so a steady mix glows quietly and every swell visibly flares
+      this.bandMean[i] += (v - this.bandMean[i]) * Math.min(1, dt * 0.5);
+      const tgt = playing ? Math.max(0, Math.min(1, 0.25 * v + 2.5 * (v - this.bandMean[i]))) : 0;
+      this.light[i] += (tgt - this.light[i]) * Math.min(1, dt * (tgt > this.light[i] ? 7 : 1.8));
     }
     {
       // plant: the sway fades in while sound plays and settles when it stops (no strength dependence)
       this.plantSway += ((playing ? 1 : 0) - this.plantSway) * Math.min(1, dt * 0.8);
+      this.updatePose(dt, playing);
+      // sky: bright sound (high centroid) leans the cycle toward warm, dark sound toward night
+      if (playing && f.centroid > 0) {
+        const lean = Math.max(-1, Math.min(1, Math.log2(f.centroid / 1500)));
+        this.skyBias += -lean * dt * 0.05;
+      }
     }
     const hz = f.melody[0], sal = f.melody[1];
     if (hz > 0 && sal > 0.2 && f.flatness < 0.35) {
@@ -419,45 +512,57 @@ export class CozyModule implements Module {
     const playing = this.level > this.sleepDb && this.awake > 0.3;
     ctx.save();
     ctx.imageSmoothingEnabled = true; // a painting at a free scale: bilinear, not nearest
-    if (this.sleepOk && this.sleepArt && this.awake < 0.999) {
+    const aw = Math.max(0, Math.min(1, this.awake));
+    if (this.sleepOk && this.sleepArt && aw < 0.999) {
       // asleep ↔ awake: the sleeping pose underneath, the awake picture fading in as the cat
       // wakes (sound starts) and out as it dozes off (quiet for 2 s)
       ctx.drawImage(this.sleepArt, ox, oy, MINI_W * s, MINI_H * s);
-      ctx.globalAlpha = Math.max(0, Math.min(1, this.awake));
     }
-    ctx.drawImage(this.art!, ox, oy, MINI_W * s, MINI_H * s);
+    // awake: the base picture, or one of the play poses (corner_play1–4.png) cross-fading in/out
+    const from = this.poseImg(this.poseFrom), to = this.poseImg(this.poseTo);
+    const pf = this.poseFade;
+    ctx.globalAlpha = aw;
+    ctx.drawImage(from, ox, oy, MINI_W * s, MINI_H * s);
+    if (to !== from && pf > 0) {
+      ctx.globalAlpha = aw * pf;
+      ctx.drawImage(to, ox, oy, MINI_W * s, MINI_H * s);
+    }
     ctx.restore();
     // calibration (scene units, 160×96 over the 424×257 picture ≈ ×0.377)
     const lamp = { x: 140, y: 26 }, radio = { x: 62, y: 74, w: 15, h: 7 }, mug = { x: 50, y: 72 }, win = { x: 83, y: 9, w: 43, h: 66 }, keys = { x: 127, y: 68, w: 33 };
-    // ---- light through the window, one beam per frequency band (low → warm, high → pale), only
-    // on the painting's pixels ("source-atop"), so nothing spills onto the desktop
-    {
+    // ---- the sky outside and the light it lets in (2026-11-17: beams felt stencilled — replaced)
+    let lightSum = 0;
+    for (let i = 0; i < 5; i++) lightSum += this.light[i];
+    const glow = Math.min(1, lightSum / 3);
+    if (this.skyOk && this.skyMask) {
+      // 1) sky colour: a slow time-of-day drift (sunset → violet dusk → night → golden hour, ~2 min a
+      //    turn), nudged warm by bright sounds and cool by dark ones; applied with "color" through
+      //    the sky mask so the city silhouettes and clouds keep their shading
+      const cyc = [tok("dusk1"), tok("pink"), tok("dusk2"), tok("dusk3"), tok("brass")];
+      const ph = ((this.t / 24 + this.skyBias) % cyc.length + cyc.length) % cyc.length;
+      const k = Math.floor(ph), fr = ph - k;
+      const sky = mix(cyc[k], cyc[(k + 1) % cyc.length], fr * fr * (3 - 2 * fr));
+      this.tintSky(ctx, sky, "color", 0.5, ox, oy, s);
+      // 2) the glass brightens softly where the music swells
+      if (glow > 0.01) this.tintSky(ctx, tok("dusk1"), "lighter", 0.32 * glow, ox, oy, s);
+    }
+    // 3) a soft pool of window light on the floor and the cat, breathing with the bands — no hard
+    //    edges; painted only over the picture ("source-atop"), never onto the desktop
+    if (glow > 0.01) {
       ctx.save();
       ctx.globalCompositeOperation = "source-atop";
-      const bw = win.w / 5, drop = 44;
-      let sum = 0;
-      for (let i = 0; i < 5; i++) {
-        const v = this.light[i]; sum += v;
-        if (v < 0.02) continue;
-        const xa = win.x + i * bw, xb = xa + bw;
-        const gr = ctx.createLinearGradient(0, oy + win.y * s, 0, oy + (win.y + win.h + 18) * s);
-        const c = i < 2 ? tok("brass") : i < 4 ? mix(tok("brass"), tok("pink"), 0.5) : tok("dusk1");
-        gr.addColorStop(0, withAlpha(c, 0)); gr.addColorStop(0.35, withAlpha(c, 0.26 * v)); gr.addColorStop(1, withAlpha(c, 0));
-        ctx.fillStyle = gr;
-        ctx.beginPath();
-        ctx.moveTo(ox + xa * s, oy + win.y * s); ctx.lineTo(ox + xb * s, oy + win.y * s);
-        ctx.lineTo(ox + (xb - drop * 0.55) * s, oy + (win.y + win.h + 18) * s); ctx.lineTo(ox + (xa - drop * 0.55) * s, oy + (win.y + win.h + 18) * s);
-        ctx.closePath(); ctx.fill();
-      }
-      // the glass itself brightens with the overall level of the bands
-      ctx.fillStyle = withAlpha(tok("dusk1"), 0.14 * (sum / 5));
-      ctx.fillRect(ox + win.x * s, oy + win.y * s, win.w * s, win.h * s);
+      const px = ox + (win.x + win.w * 0.35) * s, py = oy + (win.y + win.h + 4) * s;
+      const gr = ctx.createRadialGradient(px, py, 2 * s, px, py, 46 * s);
+      gr.addColorStop(0, withAlpha(tok("brass"), 0.32 * glow)); gr.addColorStop(0.55, withAlpha(tok("pink"), 0.12 * glow)); gr.addColorStop(1, withAlpha(tok("pink"), 0));
+      ctx.fillStyle = gr;
+      ctx.fillRect(ox + (win.x - 50) * s, oy + (win.y + 20) * s, (win.w + 70) * s, (win.h + 10) * s);
       ctx.restore();
     }
     // ---- the big plant on the left sways gently while sound plays (calm, no strength), around the pot rim
     if (this.plantOk && this.plantArt) {
       const pv = { x: 29.4, y: 71.7 };
-      const ang = this.plantSway * (0.6 * Math.sin(this.t * 0.62 + this.swayPh[0]) + 0.4 * Math.sin(this.t * 1.07 + this.swayPh[1])) * (Math.PI / 180) * 2.2;
+      // three incommensurate slow waves → never repeats, never jerks; ±~4.5° at the leaf tips
+      const ang = this.plantSway * (0.55 * Math.sin(this.t * 0.75 + this.swayPh[0]) + 0.3 * Math.sin(this.t * 1.31 + this.swayPh[1]) + 0.15 * Math.sin(this.t * 2.17)) * (Math.PI / 180) * 4.5;
       ctx.save();
       ctx.imageSmoothingEnabled = true;
       ctx.translate(ox + pv.x * s, oy + pv.y * s);
@@ -472,18 +577,42 @@ export class CozyModule implements Module {
     ctx.fillStyle = g; ctx.fillRect(ox + (lamp.x - 40) * s, oy + (lamp.y - 20) * s, 80 * s, 70 * s);
     // rain on the window
     if (this.rain > 0.05) for (const r of this.drops) S.rect(win.x + 2 + Math.floor(r.x * (win.w - 4)), win.y + Math.floor(r.y * win.h / 44), 1, 3, withAlpha(tok("w"), 0.45 * this.rain));
-    // radio bars (over the painted grille)
-    for (let i = 0; i < 5; i++) {
-      const hgt = playing ? Math.max(1, Math.round(this.bands[i] * radio.h)) : 1;
-      S.rect(radio.x + 1 + i * 3, radio.y + radio.h - hgt, 2, hgt, withAlpha(tok("brass"), playing ? 0.55 + 0.45 * this.bands[i] : 0.35));
+    // radio: no drawn bars over the painting (2026-11-17 사용자: 라디오에 걸친 이펙트가 어색) — the
+    // painting's own amber display glows: five soft vertical light columns, one per band, added
+    // ("lighter") inside the display only, so the painted equaliser itself seems to light up
+    {
+      const disp = { x: 57, y: 67, w: 23, h: 12 };
+      ctx.save();
+      ctx.beginPath(); ctx.rect(ox + disp.x * s, oy + disp.y * s, disp.w * s, disp.h * s); ctx.clip();
+      ctx.globalCompositeOperation = "lighter";
+      const cw = disp.w / 5;
+      for (let i = 0; i < 5; i++) {
+        const v = playing ? this.bands[i] : 0;
+        if (v < 0.03) continue;
+        const cx = ox + (disp.x + cw * (i + 0.5)) * s, cy = oy + (disp.y + disp.h * (1 - 0.55 * v)) * s;
+        const gr = ctx.createRadialGradient(cx, cy, 0, cx, cy, cw * 1.3 * s);
+        gr.addColorStop(0, withAlpha(tok("brass"), 0.45 * v)); gr.addColorStop(1, withAlpha(tok("brass"), 0));
+        ctx.fillStyle = gr;
+        ctx.fillRect(ox + disp.x * s, oy + disp.y * s, disp.w * s, disp.h * s);
+      }
+      ctx.restore();
     }
-    // notes drifting up from the radio while music plays
-    if (playing && Math.random() < this.frameDt * 1.0) this.notes.push({ x: radio.x + 4 + Math.random() * 8, y: radio.y - 4, life: 0, max: 2.2 + Math.random(), drift: Math.random() * 2 - 1 });
-    for (const n of this.notes) {
-      const u = n.life / n.max, al = u < 0.15 ? u / 0.15 : 1 - (u - 0.15) / 0.85;
-      const nx = Math.round(n.x + Math.sin(n.life * 2.5) * 2 + n.drift * n.life * 2), ny = Math.round(n.y - n.life * 9);
-      const col = withAlpha(tok(Math.round(n.x) % 2 ? "pink" : "brass"), 0.85 * al);
-      S.rect(nx + 2, ny - 4, 1, 5, col); S.ellipse(nx + 1, ny, 1.5, 1.2, col); S.rect(nx + 3, ny - 4, 2, 1, col);
+    // notes: soft glowing ♪ / ♫ glyphs (not pixel rects) drifting up from the radio while music plays
+    if (playing && Math.random() < this.frameDt * 0.8) this.notes.push({ x: radio.x + 2 + Math.random() * 10, y: radio.y - 6, life: 0, max: 2.4 + Math.random(), drift: Math.random() * 2 - 1 });
+    if (this.notes.length) {
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = `${Math.max(9, Math.round(5 * s))}px "Segoe UI Symbol", "Segoe UI", sans-serif`;
+      ctx.shadowBlur = 3 * s;
+      for (const n of this.notes) {
+        const u = n.life / n.max, al = u < 0.2 ? u / 0.2 : 1 - (u - 0.2) / 0.8;
+        const nx = n.x + Math.sin(n.life * 2.2 + n.drift * 3) * 1.6 + n.drift * n.life * 2.2, ny = n.y - n.life * 8;
+        const col = tok(n.drift > 0 ? "brass" : "pink");
+        ctx.shadowColor = withAlpha(col, 0.6 * al);
+        ctx.fillStyle = withAlpha(mix(col, tok("w"), 0.35), 0.85 * al);
+        ctx.fillText(n.drift > 0.4 ? "♫" : "♪", ox + nx * s, oy + ny * s);
+      }
+      ctx.restore();
     }
     // steam from the mug
     for (const st of this.steam) {

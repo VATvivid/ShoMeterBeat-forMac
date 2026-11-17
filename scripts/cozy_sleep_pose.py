@@ -19,21 +19,11 @@ M = (ell | ears) & (yy < 206)                # hole to fill (incl. the mullion s
 Mg = M.copy()
 for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)): Mg |= np.roll(M, (dy, dx), (0, 1))
 M = Mg & (yy < 206)
-# harmonic fill of the hole (background behind the head)
+# the hole behind the head comes from the cat-less background (the whole cat removed and the window,
+# frame and cushion rebuilt by exemplar in-painting — scratchpad remove_cat6.py), so it is sharp, not blurred
+bgcl = np.frombuffer(subprocess.run([FF, "-v", "error", "-i", sys.argv[6] if len(sys.argv) > 6 else "catless.png", "-f", "rawvideo", "-pix_fmt", "rgba", "-"], capture_output=True, check=True).stdout, np.uint8).reshape(H, W, 4).astype(np.float32)
 plate = img.copy()
-plate[M] = 0
-ys, xs = np.where(M)
-y0, y1, x0, x1 = ys.min() - 1, ys.max() + 2, xs.min() - 1, xs.max() + 2
-sub = plate[y0:y1, x0:x1, :3].copy(); m = M[y0:y1, x0:x1]
-sub[m] = sub[~m].mean(0)
-for _ in range(1500):
-    avg = (np.roll(sub, 1, 0) + np.roll(sub, -1, 0) + np.roll(sub, 1, 1) + np.roll(sub, -1, 1)) / 4
-    sub[m] = avg[m]
-# a little grain so the fill does not read as a smooth blob
-rng = np.random.default_rng(1)
-sub[m] += rng.normal(0, 2.0, (m.sum(), 3))
-plate[y0:y1, x0:x1, :3] = sub
-plate[M, 3] = 255
+plate[M] = bgcl[M]
 # lowered + tilted head
 px, py = 263 + 14, 183 + 27      # neck pivot (lower right of the head)
 c, s = np.cos(T), np.sin(T)

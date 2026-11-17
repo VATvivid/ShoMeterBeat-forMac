@@ -40,7 +40,7 @@ src-tauri/src/audio/tempo.rs    파일 템포(Player): 플럭스+컬럼 RMS → 
 src/modules/transient.ts        BPM Checker: tempo.rs와 같은 추정기를 라이브 overview(flux·rms 컬럼)에 적용. 온셋 간격 임시 펄스 BPM(ACF 잠금 전), 비트 점은 온셋에 위상 고정 + 0.5 s 지연 보정. 두 파일은 같이 고친다
 src-tauri/src/audio/melody.rs   주 멜로디 f0 살리언스: 미드 FFT 피크 → f/h(h≤10) 투표(20센트 격자 C2–C7, 0.8^(h−1)·√amp) → 멜로디 음역 사전 → 상위 4후보(Hz, 살리언스). 프레임 꼬리 [2*N_MELODY]
 src/modules/keysynth.ts         건반 클릭 → 피아노 소리(WebAudio 가산 신디, Piano·Pitch 공용). 시스템 출력으로 나가 루프백에 다시 들어온다
-src/modules/cozy.ts             Cozy 모듈: 원화 `public/cozy/corner.png`를 160×96 격자에 깔고 움직이는 부분만 덧그림(`drawArt`: 레벨→램프 글로우, 스펙트럼→라디오 바, 재생 중 음표, 머그 김, 평탄도→창 비, melody→건반, 조용하면 zzz). 타일 = 황혼 배경 위 맞춤, 미니 창 = 투명·모서리 밀착·정수 배율. 원화가 없을 때만 코드로 그린 방/코너(`--cozy-*` 토큰)로 폴백
+src/modules/cozy.ts             Cozy 모듈: 원화 `public/cozy/corner.png`를 160×96 격자에 깔고 움직이는 부분만 덧그림(`drawArt`: 레벨→램프 글로우, 스펙트럼→라디오 바, 재생 중 음표, 머그 김, 평탄도→창 비, melody→건반, 조용하면 zzz, 재생 중 놀이 포즈 `corner_play1~4.png`). 타일 = 황혼 배경 위 맞춤, 미니 창 = 투명·모서리 밀착·정수 배율. 원화가 없을 때만 코드로 그린 방/코너(`--cozy-*` 토큰)로 폴백
 public/cozy/corner.png          미니 코너 원화(RGBA, 5:3). `scripts/cozy_asset.py`로 목업에서 잘라 바탕화면 키잉·반전해 만든다. 바꾸면 그림이 바뀌고, cozy.ts drawArt의 캘리브레이션 좌표(램프·라디오·머그·창·건반)만 맞추면 된다
 src/mini.ts                     코지 미니 전용 창(`?win=mini`, 별도 창 기능과 별개, 툴바 🐱 `#mini-btn` 토글·`rm://mini-state`): 투명·프레임 없음·항상 위·작업표시줄 제외, 왼쪽 위 그립 드래그로 크기(5:3, 오른쪽 아래 고정, 240~1600, `rm.mini.v1`에 저장), 보통 `cozy` 모듈 한 타일(설정 공유, `IS_MINI`로 코너 뷰), 끌어서 이동(캔버스가 드래그 영역), 우클릭 설정·닫기, 호버 ✕, 위치·열림 상태 `rm.mini.v1`로 복원. 창 ▾ → 🐱 코지 미니(토글)
 src/dock.ts installDockGrip      도킹 띠 안쪽 가장자리 그립 드래그 = 띠 두께(dockSize) 실시간 조절(두께 선택 UI 없음); grid.ts 도킹 셀은 쓰는 칸 수로 띠를 꽉 채움(최소 28 px, 넘치면 스크롤); 도킹 중 body·타일은 투명도와 무관하게 불투명
