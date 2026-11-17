@@ -5,7 +5,9 @@ const calls = new Set();
 const ctxProxy = () => new Proxy({}, {
   get: (_, k) => {
     if (k === "measureText") return () => ({ width: 10 });
-    if (k === "createLinearGradient" || k === "createRadialGradient") return () => ({ addColorStop() {} });
+    // gradient stops reject malformed colours like the browser does (Cozy once fed rgba(NaN…) here
+    // and the transparent mini window went blank whenever music played — 2026-11-17)
+    if (k === "createLinearGradient" || k === "createRadialGradient") return () => ({ addColorStop(_o, c) { if (typeof c !== "string" || /NaN|undefined/.test(c) || !/^(#[0-9a-f]{3,8}|rgba?\(|hsla?\(|color\()/i.test(c.trim())) throw new SyntaxError(`addColorStop: invalid colour "${c}"`); } });
     return typeof k === "string" ? (() => { calls.add(k); }) : undefined;
   },
   set: () => true,
@@ -17,6 +19,8 @@ globalThis.document = { documentElement: {}, addEventListener() {}, createElemen
 globalThis.getComputedStyle = () => ({ getPropertyValue: (k) => vars[k] ?? "" });
 globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.ImageData = class { constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } };
+// images "load" at once, so modules that draw painted art (Cozy) run their art path, not only the fallback
+globalThis.Image = class { constructor() { this.naturalWidth = 0; this.onload = null; this.onerror = null; } set src(v) { this._src = v; this.naturalWidth = 424; this.naturalHeight = 257; queueMicrotask(() => this.onload?.()); } get src() { return this._src; } };
 const bundle = pathToFileURL(fileURLToPath(new URL("../node_modules/.smoke/smoke.js", import.meta.url))).href;
 const { MODULES, createSource, settings } = await import(bundle);
 settings.modules.spectrogram = { view: "3d", speed: 2 }; // exercise the 3D path too

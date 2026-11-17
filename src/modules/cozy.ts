@@ -38,12 +38,17 @@ const T: Record<string, string> = {
   w: "fg-0", k: "bg-0", c: "sig", y: "target", o: "peak",
 };
 
-/** Linear mix of two hex colours (t = 0 → a, 1 → b) as an rgb() string. */
+/**
+ * Linear mix of two hex colours (t = 0 → a, 1 → b) as a #rrggbb string — hex, so the result can go
+ * through `withAlpha` (an rgb() string there became rgba(NaN…), addColorStop threw, and the mini
+ * window — transparent — went blank whenever music played: 2026-11-17).
+ */
 function mix(a: string, b: string, t: number): string {
   const p = (h: string, i: number) => parseInt(h.slice(i, i + 2), 16);
   const A = a.replace("#", ""), B = b.replace("#", "");
   const u = Math.max(0, Math.min(1, t));
-  return `rgb(${Math.round(p(A, 0) + (p(B, 0) - p(A, 0)) * u)},${Math.round(p(A, 2) + (p(B, 2) - p(A, 2)) * u)},${Math.round(p(A, 4) + (p(B, 4) - p(A, 4)) * u)})`;
+  const ch = (i: number) => Math.round(p(A, i) + (p(B, i) - p(A, i)) * u).toString(16).padStart(2, "0");
+  return `#${ch(0)}${ch(2)}${ch(4)}`;
 }
 
 export class CozyModule implements Module {
