@@ -39,6 +39,7 @@ src/modules/punch.ts            Punch 모듈 UI: 라이브 바 · 마지막 히�
 src-tauri/src/audio/tempo.rs    파일 템포(Player): 플럭스+컬럼 RMS → 액센트 가중 온셋 함수 → 6 s ACF 누적(5탭 확장) → ½칸 lag 하모닉 합 → 넓은 사전(120 BPM ±1옥타브, 자동) → 옥타브 동률 판정(절반 lag가 90 % 이상이면 채택) → 포물선 보정
 src/modules/transient.ts        BPM Checker: tempo.rs와 같은 추정기를 라이브 overview(flux·rms 컬럼)에 적용. 온셋 간격 임시 펄스 BPM(ACF 잠금 전), 비트 점은 온셋에 위상 고정 + 0.5 s 지연 보정. 두 파일은 같이 고친다
 src-tauri/src/audio/melody.rs   주 멜로디 f0 살리언스: 미드 FFT 피크 → f/h(h≤10) 투표(20센트 격자 C2–C7, 0.8^(h−1)·√amp) → 멜로디 음역 사전 → 상위 4후보(Hz, 살리언스). 프레임 꼬리 [2*N_MELODY]
+src-tauri/src/audio/transcribe.rs  피아노 다성 채보: Spotify Basic Pitch(`models/nmp.onnx`, Apache-2.0) — 22 050 Hz 리샘플, 최근 2 s 창을 8프레임(≈93 ms)마다 추론, 창 끝 8프레임 전 결과 사용(지연 ≈0.1–0.2 s), UI 프레임마다 시간에 맞춰 풀어 max-pool. 프레임 꼬리 [2*88](노트, 온셋). Piano 하트비트 있을 때만 동작. `examples/transcribe.rs`로 파일 진단. ONNX 환경은 `ortenv.rs`로 태거와 공유(프로세스당 1개)
 src/modules/keysynth.ts         건반 클릭 → 피아노 소리(WebAudio 가산 신디, Piano·Pitch 공용). 시스템 출력으로 나가 루프백에 다시 들어온다
 src/modules/cozy.ts             Cozy 모듈: 원화 `public/cozy/corner.png`를 160×96 격자에 깔고 움직이는 부분만 덧그림(`drawArt`: 레벨→램프 글로우, 스펙트럼→라디오 바, 재생 중 음표, 머그 김, 평탄도→창 비, melody→건반, 조용하면 zzz, 재생 중 놀이 포즈 `corner_play1~4.png`). 타일 = 황혼 배경 위 맞춤, 미니 창 = 투명·모서리 밀착·정수 배율. 원화가 없을 때만 코드로 그린 방/코너(`--cozy-*` 토큰)로 폴백
 public/cozy/corner.png          미니 코너 원화(RGBA, 5:3). `scripts/cozy_asset.py`로 목업에서 잘라 바탕화면 키잉·반전해 만든다. 바꾸면 그림이 바뀌고, cozy.ts drawArt의 캘리브레이션 좌표(램프·라디오·머그·창·건반)만 맞추면 된다

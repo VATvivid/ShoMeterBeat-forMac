@@ -331,6 +331,20 @@ fn set_tag_model(engine: State<Engine>, model: String) {
     engine.0.tagger.lock().set_model(&model);
 }
 
+// ---- piano transcription (Basic Pitch) ----------------------------------------------
+
+/// Heartbeat from the Piano module: transcription runs for 3 s after each call with `true`.
+/// `mode`: 0 즉시 (Basic Pitch), 1 = 1 s delay, 2 = 3 s delay (Kong) — see transcribe.rs.
+#[tauri::command]
+fn set_transcribe(engine: State<Engine>, enabled: bool, mode: Option<usize>) {
+    engine.0.transcriber.lock().want(enabled, mode.unwrap_or(0));
+}
+
+#[tauri::command]
+fn transcribe_status(engine: State<Engine>) -> audio::transcribe::TranscribeStatus {
+    engine.0.transcriber.lock().status.clone()
+}
+
 // ---- subtitles (whisper) ----------------------------------------------------------
 
 #[tauri::command]
@@ -655,6 +669,7 @@ pub fn run() {
                 use tauri::Manager;
                 let dir = audio::tagger::model_dir(app.path().resource_dir().ok());
                 audio::tagger::start(shared.tagger.clone(), dir.clone());
+                audio::transcribe::start(shared.transcriber.clone(), dir.clone());
                 let models_dir = dir.or_else(|| app.path().resource_dir().ok().map(|r| r.join("models")));
                 audio::subtitle::start(shared.subtitle.clone(), models_dir);
                 Ok(())
@@ -675,7 +690,7 @@ pub fn run() {
             frame, list_devices, set_source, reset_loudness, status, install_plugins,
             rec_start, rec_stop, rec_save, rec_discard, rec_default_name, rec_info,
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
-            events_since, set_onset_k, tags_since, set_tagging, tag_status, set_tag_model, subtitles_since, set_subtitles, subtitle_status,
+            events_since, set_onset_k, tags_since, set_tagging, tag_status, set_tag_model, subtitles_since, set_subtitles, subtitle_status, set_transcribe, transcribe_status,
             punch_hits_since, punch_status, punch_reset,
             set_opacity, set_appbar, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])

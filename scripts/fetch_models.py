@@ -3,7 +3,7 @@
   python -I -X utf8 scripts/fetch_models.py                 # YAMNet ONNX + class map + ONNX Runtime
   python -I -X utf8 scripts/fetch_models.py --whisper small # + whisper ggml model (base|small|medium)
 
-Licences: YAMNet Apache-2.0 (Google), ONNX Runtime MIT (Microsoft), whisper.cpp ggml models MIT
+Licences: YAMNet Apache-2.0 (Google), Basic Pitch Apache-2.0 (Spotify), ONNX Runtime MIT (Microsoft), whisper.cpp ggml models MIT
 (ggerganov / OpenAI). See THIRD_PARTY_NOTICES.md. `--ssl-no-revoke` works around corporate
 TLS inspection breaking schannel revocation checks on CDN hosts.
 """
@@ -16,6 +16,9 @@ CURL = ["curl", "-L", "--ssl-no-revoke", "--retry", "3", "-A", "ShowMeterBeat"]
 FILES = {
     "yamnet.onnx": "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet.onnx",
     "yamnet_class_map.csv": "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet_class_map.csv",
+    # Basic Pitch (Spotify, Apache-2.0) — polyphonic piano transcription for the Piano module
+    "nmp.onnx": "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx",
+    "BASIC_PITCH_LICENSE": "https://raw.githubusercontent.com/spotify/basic-pitch/main/LICENSE",
 }
 ORT_URL = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1/onnxruntime-win-x64-1.31.1.zip"
 
@@ -47,6 +50,12 @@ if not os.path.exists(os.path.join(DST, "onnxruntime.dll")):
             elif base == "LICENSE":
                 open(os.path.join(DST, "ORT_LICENSE"), "wb").write(z.read(n))
     os.remove(tmp)
+
+if not os.path.exists(os.path.join(DST, "kong_note.onnx")):
+    # the Piano's 1 s / 3 s delay modes: an ONNX export of Kong et al.'s note model (needs torch)
+    print("kong_note.onnx missing — Piano 딜레이 모드(1·3초)용: torch가 있는 Python에서 scripts/export_kong.py 실행")
+if not os.path.exists(os.path.join(DST, "KONG_LICENSE")):
+    fetch("https://raw.githubusercontent.com/qiuqiangkong/piano_transcription_inference/master/LICENSE", os.path.join(DST, "KONG_LICENSE"))
 
 if "--whisper" in sys.argv:
     i = sys.argv.index("--whisper")

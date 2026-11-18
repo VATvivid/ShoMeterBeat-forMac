@@ -255,18 +255,12 @@ pub fn start(state: Arc<Mutex<TaggerState>>, dir: Option<PathBuf>) {
                 return;
             };
             state.lock().status.models = MODELS.iter().filter(|m| has_model(&dir, m)).map(|m| m.id.to_string()).collect();
-            // ONNX Runtime is loaded at run time from models/onnxruntime.dll (no link-time dependency).
-            let dll = dir.join("onnxruntime.dll");
-            let env = match ort::init_from(&dll) {
-                Ok(b) => match b.with_name("ShowMeterBeat").build() {
-                    Ok(env) => env,
-                    Err(e) => {
-                        state.lock().status.error = Some(format!("ONNX Runtime 초기화 실패: {e}"));
-                        return;
-                    }
-                },
+            // ONNX Runtime is loaded at run time from models/onnxruntime.dll (no link-time dependency);
+            // one environment per process, shared with the piano transcriber (ortenv.rs).
+            let env = match super::ortenv::get(&dir) {
+                Ok(env) => env,
                 Err(e) => {
-                    state.lock().status.error = Some(format!("onnxruntime.dll 로드 실패 ({}): {e}", dll.display()));
+                    state.lock().status.error = Some(e);
                     return;
                 }
             };

@@ -53,6 +53,24 @@ Both are Apache License 2.0 (Copyright Google LLC). The files are downloaded by
 `scripts/fetch_models.py` and shipped as app resources. Inference runs locally with
 ONNX Runtime (MIT, Microsoft) via the `ort` crate.
 
+## Basic Pitch (piano transcription model)
+
+`models/nmp.onnx` is the ONNX model of Spotify's Basic Pitch (R. Bittner, J. J. Bosch, D. Rubinstein,
+G. Meseguer-Brocal, S. Ewert, "A Lightweight Instrument-Agnostic Model for Polyphonic Note
+Transcription and Multipitch Estimation", ICASSP 2022) from
+https://github.com/spotify/basic-pitch (`basic_pitch/saved_models/icassp_2022/nmp.onnx`),
+Apache License 2.0, Copyright 2022 Spotify AB (`models/BASIC_PITCH_LICENSE`). Downloaded by
+`scripts/fetch_models.py`, shipped as an app resource and run locally with ONNX Runtime.
+
+## Kong et al. high-resolution piano transcription (Piano delay modes)
+
+`models/kong_note.onnx` is the note model of Q. Kong, B. Li, X. Song, Y. Wan, Y. Wang, "High-resolution
+Piano Transcription with Pedals by Regressing Onset and Offset Times" (IEEE/ACM TASLP 2021), exported
+to ONNX by `scripts/export_kong.py` from the checkpoint `CRNN_note_F1=0.9677_pedal_F1=0.9186.pth`
+(https://zenodo.org/record/4034264, Creative Commons Attribution 4.0) with the model code of
+`piano_transcription_inference` (https://github.com/qiuqiangkong/piano_transcription_inference,
+MIT License, `models/KONG_LICENSE`). Run locally with ONNX Runtime.
+
 ## EfficientAT (AI sound-event tagging model, selectable)
 
 `models/efficientat_mn10_as.onnx` is exported by `scripts/export_efficientat.py` from the

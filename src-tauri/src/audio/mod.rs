@@ -17,6 +17,8 @@ pub mod events;
 pub mod recorder;
 pub mod subtitle;
 pub mod tagger;
+pub mod ortenv;
+pub mod transcribe;
 pub mod tempo;
 pub mod melody;
 pub mod voice;
@@ -111,6 +113,7 @@ pub struct Shared {
     pub mode: Mutex<Mode>,
     pub wave: Mutex<Option<wave::WaveHistory>>,
     pub tagger: Arc<Mutex<tagger::TaggerState>>,
+    pub transcriber: Arc<Mutex<transcribe::TranscriberState>>,
     pub punch: Mutex<Option<punch::PunchMeter>>,
     pub subtitle: Arc<Mutex<subtitle::SubtitleState>>,
 }
@@ -127,6 +130,7 @@ impl Shared {
             mode: Mutex::new(Mode::Auto),
             wave: Mutex::new(None),
             tagger: Arc::new(Mutex::new(tagger::TaggerState::new())),
+            transcriber: Arc::new(Mutex::new(transcribe::TranscriberState::new())),
             punch: Mutex::new(None),
             subtitle: Arc::new(Mutex::new(subtitle::SubtitleState::new())),
         })
@@ -402,6 +406,7 @@ fn analysis_loop(shared: Arc<Shared>) {
                 p.feed(&chunk);
             }
             shared.tagger.lock().feed(&chunk, sr);
+            shared.transcriber.lock().feed(&chunk, sr);
             shared.subtitle.lock().feed(&chunk, sr);
         }
 
@@ -427,6 +432,7 @@ fn analysis_loop(shared: Arc<Shared>) {
             f.f3 = last_voice.f3;
             f.voiced = last_voice.voiced;
             f.envelope.copy_from_slice(&voice.envelope);
+            f.poly.copy_from_slice(&shared.transcriber.lock().display());
             if let Some(p) = shared.punch.lock().as_ref() {
                 f.punch_m = p.stats.momentary;
                 f.tsr = p.stats.tsr;

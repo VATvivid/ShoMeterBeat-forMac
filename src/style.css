@@ -249,11 +249,21 @@ body.mini #grid, body.pop.mini #grid { margin: 0; }
 body.mini .tile { background: transparent; border: none; border-radius: 0; }
 body.mini .tile-head { display: none; }
 body.mini .tile .resize-handle { display: none; }
-body.mini .tile-body { cursor: grab; }
-body.mini .mini-close { position: fixed; top: 2px; right: 4px; z-index: 80; width: 18px; height: 18px; padding: 0; font-size: 10px; opacity: 0; transition: opacity 150ms; }
-body.mini:hover .mini-close { opacity: 0.85; }
-#mini-resize { position: fixed; left: 0; top: 0; width: 16px; height: 16px; z-index: 80; cursor: nwse-resize; opacity: 0; transition: opacity 150ms; background: linear-gradient(315deg, transparent 50%, var(--fg-1) 50%); border-radius: 0 0 4px 0; }
-body.mini:hover #mini-resize { opacity: 0.7; }
+body.mini .tile-body { cursor: default; }
+body.mini.mini-editing .tile-body { cursor: grab; }
+/* ✎ ✕ (top-right): fade in when the cursor is near (polled — the window ignores the mouse otherwise) */
+body.mini .mini-ctl { position: fixed; top: 3px; right: 4px; z-index: 80; display: flex; gap: 4px; opacity: 0; transition: opacity 150ms; }
+body.mini.mini-near .mini-ctl { opacity: 1; }
+/* solid, high-contrast buttons so they are easy to find over the picture and the desktop */
+body.mini .mini-ctl .btn { width: 22px; height: 22px; padding: 0; font-size: 12px; font-weight: 700; color: #fff; background: rgba(20, 22, 26, 0.88); border: 1px solid rgba(255, 255, 255, 0.55); border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+body.mini .mini-ctl .btn:hover { background: rgba(255, 152, 67, 0.9); border-color: #fff; color: #111; }
+/* the picture's opacity eases (hover see-through, the transparency setting) */
+body.mini #grid { transition: opacity 450ms ease; }
+body.mini .mini-edit.on { background: rgba(255, 152, 67, 0.25); border-color: var(--peak); }
+/* edit mode: a dashed outline, the resize grip */
+body.mini.mini-editing::after { content: ""; position: fixed; inset: 0; border: 1px dashed var(--peak); border-radius: 4px; pointer-events: none; z-index: 79; }
+#mini-resize { position: fixed; left: 0; top: 0; width: 16px; height: 16px; z-index: 80; cursor: nwse-resize; opacity: 0; pointer-events: none; transition: opacity 150ms; background: linear-gradient(315deg, transparent 50%, var(--fg-1) 50%); border-radius: 0 0 4px 0; }
+body.mini.mini-editing #mini-resize { opacity: 0.8; pointer-events: auto; }
 body.docked.dock-tiny .tile-head { display: none; }
 
 /* Waveform selection overlay (WAV 저장 / 취소) */

@@ -197,6 +197,14 @@ class MockSource implements Source {
       const resting = this.t % 4 > 3.4;
       f.melody[0] = resting ? 0 : f.f0; f.melody[1] = resting ? 0 : 0.7;
       f.melody[2] = resting ? 0 : f.f0 * 2; f.melody[3] = resting ? 0 : 0.3;
+      // piano transcription (two hands): the same melody + a left-hand C–F–G–C chord per 2 s, onsets at note starts
+      f.poly.fill(0);
+      if (!resting) {
+        const ph = (this.t % 0.5) / 0.5;
+        f.poly[seq[step] - 21] = 0.85; f.poly[88 + seq[step] - 21] = ph < 0.1 ? 0.9 : 0.05;
+      }
+      const roots = [48, 53, 55, 48], r = roots[Math.floor(this.t / 2) % 4], cph = (this.t % 2) / 2;
+      for (const iv of [0, 4, 7]) { const k = r + iv - 12 - 21 + (iv === 0 ? 0 : 12); f.poly[k] = 0.75 * (1 - 0.4 * cph); f.poly[88 + k] = cph < 0.05 ? 0.9 : 0.04; }
     }
     // Breath in the gaps: noisy, bright, a short burst.
     const gapT = this.t % 4;

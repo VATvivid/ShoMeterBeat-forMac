@@ -3,7 +3,7 @@ import { freqToIndex, SILENCE_DB } from "../engine/frame";
 import { theme, withAlpha } from "../theme";
 import type { DrawCtx, Module, SettingItem } from "./types";
 import { modSetting, setModSetting } from "../state";
-import { IS_MINI } from "../mini";
+import { applyMiniFade, IS_MINI, miniPointer } from "../mini";
 
 // Cozy (코지 룸 · 재미용): a warm little study room that lives on what is playing.
 //
@@ -43,6 +43,96 @@ const T: Record<string, string> = {
  * through `withAlpha` (an rgb() string there became rgba(NaN…), addColorStop threw, and the mini
  * window — transparent — went blank whenever music played: 2026-11-17).
  */
+/**
+ * 64×64 blue-noise threshold map (Ulichney's void-and-cluster with a toroidal Gaussian, σ 1.9), ranks
+ * scaled to 0..1 — built once on first use (≈ 30 M multiply-adds, tens of ms) for the mini window's
+ * dither hole. Seeded, so the pattern is the same every run.
+ */
+let BLUE: Float32Array | null = null;
+function blueNoise64(): Float32Array {
+  if (BLUE) return BLUE;
+  const N = 64, NN = N * N, SIG = 1.9;
+  const kern = new Float32Array(NN);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = Math.min(x, N - x), dy = Math.min(y, N - y);
+    kern[y * N + x] = Math.exp(-(dx * dx + dy * dy) / (2 * SIG * SIG));
+  }
+  const E = new Float32Array(NN), on = new Uint8Array(NN);
+  const add = (i: number, s: number) => {
+    const iy = (i / N) | 0, ix = i % N;
+    for (let y = 0; y < N; y++) {
+      const ry = ((y - iy + N) % N) * N, row = y * N;
+      for (let x = 0; x < N; x++) E[row + x] += s * kern[ry + ((x - ix + N) % N)];
+    }
+  };
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const tight = () => { let b = -1, v = -Infinity; for (let i = 0; i < NN; i++) if (on[i] && E[i] > v) { v = E[i]; b = i; } return b; };
+  const void_ = () => { let b = -1, v = Infinity; for (let i = 0; i < NN; i++) if (!on[i] && E[i] < v) { v = E[i]; b = i; } return b; };
+  let ones = 0;
+  while (ones < NN / 10) { const i = (rnd() * NN) | 0; if (!on[i]) { on[i] = 1; add(i, 1); ones++; } }
+  for (let it = 0; it < NN; it++) { // even out the initial pattern
+    const c = tight(); on[c] = 0; add(c, -1);
+    const v = void_(); on[v] = 1; add(v, 1);
+    if (v === c) break;
+  }
+  const rank = new Float32Array(NN);
+  const proto = on.slice(), protoE = E.slice();
+  for (let k = ones - 1; k >= 0; k--) { const c = tight(); on[c] = 0; add(c, -1); rank[c] = k; }
+  on.set(proto); E.set(protoE);
+  for (let k = ones; k < NN; k++) { const v = void_(); on[v] = 1; add(v, 1); rank[v] = k; }
+  for (let i = 0; i < NN; i++) rank[i] = (rank[i] + 0.5) / NN;
+  BLUE = rank;
+  return BLUE;
+}
+
+/**
+ * Strength field of the mini window's hole (CAT_N², over [−R, R]²): 1 inside a cat-head silhouette
+ * (round head + two pointed ears, ≈ 40 % of the radius), then dots thinning with the distance from the
+ * silhouette — a two-pass chamfer distance transform — down to 0 at ≈ 0.6 R outside it. Built once.
+ */
+const CAT_N = 128;
+let CAT: Float32Array | null = null;
+function catHoleField(): Float32Array {
+  if (CAT) return CAT;
+  const N = CAT_N, inside = new Uint8Array(N * N);
+  const tri = (px: number, py: number, a: number[], b: number[], c: number[]) => {
+    const s = (p: number[], q: number[]) => (px - q[0]) * (p[1] - q[1]) - (p[0] - q[0]) * (py - q[1]);
+    const d1 = s(a, b), d2 = s(b, c), d3 = s(c, a);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = ((i + 0.5) / N) * 2 - 1, y = ((j + 0.5) / N) * 2 - 1;
+    const head = ((x / 0.4) ** 2 + ((y - 0.1) / 0.32) ** 2) <= 1;
+    const earL = tri(x, y, [-0.37, -0.02], [-0.31, -0.46], [-0.06, -0.17]);
+    const earR = tri(x, y, [0.37, -0.02], [0.31, -0.46], [0.06, -0.17]);
+    inside[j * N + i] = head || earL || earR ? 1 : 0;
+  }
+  // distance (grid cells) to the silhouette, outside it
+  const D = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) D[i] = inside[i] ? 0 : 1e9;
+  const R2 = Math.SQRT2;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    let v = D[j * N + i];
+    if (i > 0) v = Math.min(v, D[j * N + i - 1] + 1);
+    if (j > 0) { v = Math.min(v, D[(j - 1) * N + i] + 1); if (i > 0) v = Math.min(v, D[(j - 1) * N + i - 1] + R2); if (i < N - 1) v = Math.min(v, D[(j - 1) * N + i + 1] + R2); }
+    D[j * N + i] = v;
+  }
+  for (let j = N - 1; j >= 0; j--) for (let i = N - 1; i >= 0; i--) {
+    let v = D[j * N + i];
+    if (i < N - 1) v = Math.min(v, D[j * N + i + 1] + 1);
+    if (j < N - 1) { v = Math.min(v, D[(j + 1) * N + i] + 1); if (i < N - 1) v = Math.min(v, D[(j + 1) * N + i + 1] + R2); if (i > 0) v = Math.min(v, D[(j + 1) * N + i - 1] + R2); }
+    D[j * N + i] = v;
+  }
+  CAT = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) {
+    const sd = D[i] / (N / 2);                   // in units of the radius
+    // a visible step at the outline (0.75), then thinning dots out to 0.6 R
+    CAT[i] = inside[i] ? 1.08 : sd >= 0.6 ? 0 : 0.75 * Math.pow(1 - sd / 0.6, 1.4);
+  }
+  return CAT;
+}
+
 function mix(a: string, b: string, t: number): string {
   const p = (h: string, i: number) => parseInt(h.slice(i, i + 2), 16);
   const A = a.replace("#", ""), B = b.replace("#", "");
@@ -209,10 +299,13 @@ export class CozyModule implements Module {
   }
 
   settings(): SettingItem[] {
-    return [
+    const items: SettingItem[] = [
       { type: "toggle", label: "비 효과", value: this.showFx, onChange: (v) => setModSetting(this.id, "fx", v) },
       { type: "range", label: "잠드는 조용함 (dB)", value: this.sleepDb, min: -80, max: -30, step: 5, format: (v) => `${v} dB`, onChange: (v) => setModSetting(this.id, "sleepDb", v) },
     ];
+    // mini window only: how see-through the picture is (0 % = as painted)
+    if (this.mini) items.unshift({ type: "range", label: "미니 창 투명도", value: modSetting(this.id, "miniFade", 0), min: 0, max: 90, step: 5, format: (v) => `${v}%`, onChange: (v) => { setModSetting(this.id, "miniFade", v); applyMiniFade(v); } });
+    return items;
   }
 
   headReadout() {
@@ -354,6 +447,7 @@ export class CozyModule implements Module {
       }
       const px: Px = (x, y, pw, ph, col) => { ctx.fillStyle = col; ctx.fillRect(ox + x * s, oy + y * s, pw * s, ph * s); };
       this.drawArt(ctx, this.shapes(px), s, ox, oy, tok);
+      if (mini) this.drawHole(ctx);
       return;
     }
     // ---- procedural fallback (no art file): the drawn room in a tile, the drawn corner in the mini
@@ -596,6 +690,10 @@ export class CozyModule implements Module {
     // lamp: the new picture (2026-11-18) paints the lamp unlit (grey bulb), so silence needs nothing —
     // with music the bulb itself lights up (warm-white core), then the wide glow around it
     const a = this.lamp * (this.flicker > 0 && Math.sin(this.t * 60) > 0 ? 0.4 : 1);
+    // painted only over the picture ("source-atop"): in the transparent mini window the glow used to
+    // spill above the art onto the desktop (2026-11-18 사용자: 그림 영역 밖 상단까지 나와서 어색)
+    ctx.save();
+    ctx.globalCompositeOperation = "source-atop";
     if (a > 0.01) {
       const bx = ox + lamp.x * s, by = oy + lamp.y * s;
       const bg = ctx.createRadialGradient(bx, by, 0, bx, by, 6 * s);
@@ -607,6 +705,7 @@ export class CozyModule implements Module {
     const g = ctx.createRadialGradient(ox + lamp.x * s, oy + lamp.y * s, s, ox + lamp.x * s, oy + lamp.y * s, 46 * s);
     g.addColorStop(0, withAlpha(tok("brass"), 0.5 * a)); g.addColorStop(0.4, withAlpha(tok("brass"), 0.2 * a)); g.addColorStop(1, withAlpha(tok("brass"), 0));
     ctx.fillStyle = g; ctx.fillRect(ox + (lamp.x - 46) * s, oy + (lamp.y - 24) * s, 92 * s, 78 * s);
+    ctx.restore();
     // rain on the window
     if (this.rain > 0.05) for (const r of this.drops) S.rect(win.x + 2 + Math.floor(r.x * (win.w - 4)), win.y + Math.floor(r.y * win.h / 44), 1, 3, withAlpha(tok("w"), 0.45 * this.rain));
     // radio: no drawn bars over the painting (2026-11-17 사용자: 라디오에 걸친 이펙트가 어색) — the
@@ -672,6 +771,64 @@ export class CozyModule implements Module {
       }
       ctx.restore();
     }
+  }
+
+  /**
+   * Mini window: a dithered hole around the cursor (2026-11-18 사용자: Dither Fade 방식으로 마우스 주변이
+   * 윈도우가 보이게; 이어서 "좀 더 자연스럽게") — clicks already pass through the window (mini.ts), so
+   * this shows what they land on. What makes it read naturally:
+   *  • the dither pattern is fixed to the window (cells keyed by window position), only the strength
+   *    field moves with the cursor — a pattern glued to the cursor visibly slides and shimmers;
+   *  • blue noise (void-and-cluster, 64×64, built once — blueNoise64) instead of a 4×4 Bayer matrix:
+   *    no grid / cross-hatch and no diagonal streaks (interleaved-gradient noise had those);
+   *  • 1 px cells with a soft threshold (partly transparent dots at the edge) and a wide falloff:
+   *    a clear cat-head core, then thinning dots out to the rim (catHoleField);
+   *  • the hole grows as it fades in (radius 70 → 100 %) and trails the cursor slightly (≈ 60 ms).
+   */
+  private hole = { x: -1, y: -1, c: null as HTMLCanvasElement | null, img: null as ImageData | null };
+  private drawHole(ctx: CanvasRenderingContext2D) {
+    const amt = miniPointer.hole;
+    if (amt <= 0.01 || typeof document === "undefined") { this.hole.x = -1; return; }
+    const h = this.hole;
+    if (h.x < 0) { h.x = miniPointer.x; h.y = miniPointer.y; }
+    const k = Math.min(1, this.frameDt / 0.06);
+    h.x += (miniPointer.x - h.x) * k; h.y += (miniPointer.y - h.y) * k;
+    // (2026-11-18 사용자: 흐린 범위를 더 넓게, 가운데는 동그라미 대신 고양이 모양) — radius 64 → 100 px,
+    // the clear core is a cat head (catHoleField), the dots thin out over the rest of the radius
+    const CELL = 1, RMAX = 100;
+    const bn = blueNoise64(), U = catHoleField(), M = CAT_N;
+    const R = RMAX * (0.7 + 0.3 * amt);
+    const n = Math.ceil((2 * RMAX) / CELL) + 2;
+    if (!h.c) { h.c = document.createElement("canvas"); h.c.width = n; h.c.height = n; }
+    const c = h.c.getContext("2d");
+    if (!c) return;
+    if (!h.img) h.img = c.createImageData(n, n);
+    const d = h.img.data;
+    const gx0 = Math.floor((h.x - RMAX) / CELL), gy0 = Math.floor((h.y - RMAX) / CELL);
+    const toGrid = M / (2 * R);
+    for (let j = 0; j < n; j++) {
+      const gy = gy0 + j, py = (gy + 0.5) * CELL - h.y;
+      const my = Math.floor((py + R) * toGrid);
+      for (let i = 0; i < n; i++) {
+        const gx = gx0 + i, px = (gx + 0.5) * CELL - h.x;
+        const mx = Math.floor((px + R) * toGrid);
+        let a = 0;
+        if (mx >= 0 && my >= 0 && mx < M && my < M) {
+          const st = amt * U[my * M + mx];
+          if (st > 0) {
+            const th = bn[(((gy % 64) + 64) % 64) * 64 + (((gx % 64) + 64) % 64)];
+            a = Math.max(0, Math.min(1, (st - th) * 5 + 0.5));
+          }
+        }
+        d[(j * n + i) * 4 + 3] = a * 255;
+      }
+    }
+    c.putImageData(h.img, 0, 0);
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(h.c, gx0 * CELL, gy0 * CELL, n * CELL, n * CELL);
+    ctx.restore();
   }
 
   /** Calico cat lying on its side, head to the left, tail curling right. */
