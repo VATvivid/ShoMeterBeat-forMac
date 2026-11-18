@@ -29,11 +29,23 @@ export async function setFrameless(on: boolean) {
   await applyFrame();
 }
 
+/**
+ * The toolbar is the window's drag handle only while undocked. A docked window is pinned to a screen
+ * edge, so dragging the toolbar used to pull the whole strip off the dock (2026-11-18 사용자: 도킹
+ * 모드에서 상단 드래그하면 떨어진다). Called from applyDock whenever the dock mode changes.
+ */
+export function updateToolbarDrag() {
+  const toolbar = document.getElementById("toolbar");
+  if (!toolbar) return;
+  if (settings.dock === "none") toolbar.setAttribute("data-tauri-drag-region", "");
+  else toolbar.removeAttribute("data-tauri-drag-region");
+}
+
 /** Builds the window buttons and edge grips once (shown only with body.frameless). */
 export function installFrameless() {
   if (document.getElementById("win-ctl")) return;
   const toolbar = document.getElementById("toolbar")!;
-  toolbar.setAttribute("data-tauri-drag-region", "");
+  updateToolbarDrag();
   const ctl = document.createElement("div");
   ctl.id = "win-ctl";
   const mk = (txt: string, title: string, fn: () => void, cls = "") => {

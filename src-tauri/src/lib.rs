@@ -437,7 +437,13 @@ fn set_appbar(window: tauri::Window, edge: Option<u32>, thickness: u32) -> Resul
         use windows_sys::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, APPBARDATA};
         static REGISTERED: AtomicBool = AtomicBool::new(false);
         let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")? as HWND;
-        let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, uCallbackMessage: 0, uEdge: 0, rc: RECT { left: 0, top: 0, right: 0, bottom: 0 }, lParam: 0 };
+        // ABM_NEW requires a non-zero callback message; with 0 the shell does not treat the window as a
+        // fully-registered appbar, and on a reservation change (resizing the strip) it reclaimed the
+        // window into the shrunk work area — the strip floated to work-area-bottom − thickness for
+        // ~200 ms and snapped back on release (2026-11-18 사용자: 손 떼면 상단 기준으로 떴다가 제자리).
+        // WM_APP + 1; we position the window ourselves, so the notifications need no handler.
+        const APPBAR_CB: u32 = 0x8000 + 1;
+        let mut abd = APPBARDATA { cbSize: std::mem::size_of::<APPBARDATA>() as u32, hWnd: hwnd, uCallbackMessage: APPBAR_CB, uEdge: 0, rc: RECT { left: 0, top: 0, right: 0, bottom: 0 }, lParam: 0 };
         unsafe {
             let Some(e) = edge else {
                 if REGISTERED.swap(false, Ordering::SeqCst) {
@@ -474,6 +480,116 @@ fn set_appbar(window: tauri::Window, edge: Option<u32>, thickness: u32) -> Resul
     {
         let _ = (window, edge, thickness);
         Ok(None)
+    }
+}
+
+/// Sets the window's outer rect (physical px) atomically in one SetWindowPos call. Position and size
+/// change together, so a docked strip never flashes between a separate setSize and setPosition — on
+/// release it used to "float" as the far edge overshot and snapped back (2026-11-18 사용자: 붕 떴다가
+/// 적용). Returns before the move is confirmed; callers that need the final rect re-read it.
+#[tauri::command]
+fn set_window_rect(window: tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+        let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")? as HWND;
+        unsafe {
+            SetWindowPos(hwnd, std::ptr::null_mut(), x, y, w.max(1), h.max(1), SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, x, y, w, h);
+        Ok(())
+    }
+}
+
+// The docked strip's pinned rect (physical px), guarded by a window subclass below. While it is set,
+// every WM_WINDOWPOSCHANGING is forced back to it, so when the AppBar reservation changes and the shell
+// tries to pull our window into the shrunk work area, the move is overridden in-message (no visible
+// float — 2026-11-18 사용자: 늘린 만큼 여백 할당이 안 바뀜 + 떴다가 제자리로, measured via CDP). Our own
+// resizes update this rect first, so they are not blocked.
+#[cfg(windows)]
+static DOCK_PIN: std::sync::Mutex<Option<(isize, [i32; 4])>> = std::sync::Mutex::new(None);
+
+#[cfg(windows)]
+unsafe extern "system" fn dock_subclass_proc(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows_sys::Win32::Foundation::WPARAM,
+    lparam: windows_sys::Win32::Foundation::LPARAM,
+    _id: usize,
+    _data: usize,
+) -> windows_sys::Win32::Foundation::LRESULT {
+    use windows_sys::Win32::UI::Shell::DefSubclassProc;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOMOVE, SWP_NOSIZE, WINDOWPOS, WM_WINDOWPOSCHANGING};
+    if msg == WM_WINDOWPOSCHANGING {
+        if let Ok(g) = DOCK_PIN.lock() {
+            if let Some((gh, r)) = *g {
+                if gh == hwnd as isize {
+                    let wp = &mut *(lparam as *mut WINDOWPOS);
+                    wp.x = r[0];
+                    wp.y = r[1];
+                    wp.cx = r[2];
+                    wp.cy = r[3];
+                    wp.flags &= !(SWP_NOMOVE | SWP_NOSIZE);
+                }
+            }
+        }
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
+}
+
+/// Pins the docked window to `(x, y, w, h)` (physical px) and installs a subclass that keeps it there
+/// against the shell's work-area reposition. Call on every docked move/resize; `dock_unpin` releases it.
+#[tauri::command]
+fn dock_pin(window: tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::Shell::SetWindowSubclass;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+        let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")?;
+        let rect = [x, y, w.max(1), h.max(1)];
+        if let Ok(mut g) = DOCK_PIN.lock() {
+            let first = g.is_none();
+            *g = Some((hwnd, rect));
+            if first {
+                unsafe { SetWindowSubclass(hwnd as HWND, Some(dock_subclass_proc), 1, 0); }
+            }
+        }
+        unsafe { SetWindowPos(hwnd as HWND, std::ptr::null_mut(), x, y, w.max(1), h.max(1), SWP_NOZORDER | SWP_NOACTIVATE); }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, x, y, w, h);
+        Ok(())
+    }
+}
+
+/// Removes the dock pin and its subclass (when undocking).
+#[tauri::command]
+fn dock_unpin(window: tauri::Window) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::UI::Shell::RemoveWindowSubclass;
+        let hwnd = hwnd_of(&window).ok_or("창 핸들 없음")?;
+        if let Ok(mut g) = DOCK_PIN.lock() {
+            if g.is_some() {
+                *g = None;
+                unsafe { RemoveWindowSubclass(hwnd as HWND, Some(dock_subclass_proc), 1); }
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Ok(())
     }
 }
 
@@ -692,7 +808,7 @@ pub fn run() {
             wave_overview, wave_export, analyze_reference, load_audio, analyze_file, write_text, read_text,
             events_since, set_onset_k, tags_since, set_tagging, tag_status, set_tag_model, subtitles_since, set_subtitles, subtitle_status, set_transcribe, transcribe_status,
             punch_hits_since, punch_status, punch_reset,
-            set_opacity, set_appbar, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
+            set_opacity, set_appbar, set_window_rect, dock_pin, dock_unpin, drag_hover, drag_leave, drag_drop, to_screen, default_clip_dir, ensure_dir, clip_drag_icon
         ])
         .run(tauri::generate_context!())
         .expect("error while running ShowMeterBeat");

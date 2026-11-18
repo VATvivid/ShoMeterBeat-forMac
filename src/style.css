@@ -197,7 +197,9 @@ select optgroup { background: var(--bg-2); color: var(--fg-1); font-style: norma
 #win-ctl { display: none; gap: 2px; position: absolute; right: 4px; top: 50%; transform: translateY(-50%); padding-left: 4px; background: var(--bg-2); z-index: 5; }
 body.frameless #toolbar { position: relative; padding-right: 92px; }
 body.frameless #win-ctl { display: flex; }
-body.docked #win-ctl { display: none; }
+/* docked: only the close button (a strip isn't minimized / maximized) — 2026-11-18 사용자: 도킹 모드에 종료 버튼 */
+body.docked #win-ctl { display: flex; }
+body.docked #win-ctl .win-ctl-btn:not(.close) { display: none; }
 .win-ctl-btn { width: 26px; padding: 0; background: transparent; border-color: transparent; }
 .win-ctl-btn:hover { background: var(--bg-3); }
 .win-ctl-btn.close:hover { background: var(--clip); color: var(--fg-0); }
@@ -219,7 +221,7 @@ body.frameless:not(.docked) .edge-grip { display: block; }
 
 /* Docked: slim chrome, no status bar, tiles without headers to save space */
 body.docked #statusbar { display: none; }
-body.docked #toolbar { height: 28px; flex: 0 0 28px; }
+body.docked #toolbar { height: 28px; flex: 0 0 28px; position: relative; padding-right: 34px; }
 body.docked .btn { height: 22px; padding: 0 7px; }
 body.docked select { height: 22px; min-width: 120px; max-width: 200px; }
 body.docked .app-name { display: none; }

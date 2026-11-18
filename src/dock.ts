@@ -3,6 +3,7 @@
 // kind changes.
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./engine/source";
+import { updateToolbarDrag } from "./frameless";
 import { layoutKindFor, saveSettings, settings, type DockMode } from "./state";
 
 interface Saved { x: number; y: number; w: number; h: number }
@@ -18,9 +19,11 @@ export async function applyDock(mode: DockMode) {
   saveSettings();
   document.body.classList.toggle("docked", mode !== "none");
   document.body.dataset.dock = mode;
+  updateToolbarDrag(); // docked windows are pinned — the toolbar must not drag the window off the edge
   if (!inTauri) return;
   const { api, w } = await win();
   if (mode === "none") {
+    await invoke("dock_unpin").catch(() => {}); // release the pin so the window can return to its free spot
     await invoke("set_appbar", { edge: null, thickness: 0 }).catch(() => {});
     await w.setMinSize(new api.LogicalSize(640, 400)).catch(() => {});
     await w.setAlwaysOnTop(settings.alwaysOnTop);
@@ -71,15 +74,10 @@ export async function applyDock(mode: DockMode) {
   await w.setResizable(false).catch(() => {});
   await w.setShadow(false).catch(() => {});
   await w.setAlwaysOnTop(true);
-  await w.setSize(new api.PhysicalSize(width, height));
-  await w.setPosition(new api.PhysicalPosition(x, y));
-  // Undecorated windows can land a few px off (frame compensation): measure and nudge once.
-  try {
-    const p = await w.outerPosition(), s = await w.outerSize();
-    const dx = x - p.x, dy = y - p.y, dw = width - s.width, dh = height - s.height;
-    if (dx || dy) await w.setPosition(new api.PhysicalPosition(x + dx, y + dy));
-    if (dw || dh) await w.setSize(new api.PhysicalSize(width + dw, height + dh));
-  } catch { /* ignore */ }
+  // Pin the window to the reserved rect: dock_pin positions it atomically AND installs a guard that
+  // holds it there against the shell's work-area reposition when the reservation changes (2026-11-18
+  // 사용자: 늘린 만큼 여백 할당·붕 뜸).
+  await invoke("dock_pin", { x, y, w: width, h: height }).catch(() => {});
 }
 
 /**
@@ -93,28 +91,73 @@ export function installDockGrip() {
   grip.id = "dock-grip";
   grip.title = "끌어서 띠 두께 조절";
   document.body.appendChild(grip);
-  let timer: number | undefined;
-  grip.addEventListener("pointerdown", (e) => {
+  grip.addEventListener("pointerdown", async (e) => {
     if (settings.dock === "none" || e.button !== 0) return;
     e.preventDefault();
     grip.setPointerCapture(e.pointerId);
     const mode = settings.dock;
     const start = settings.dockSize;
-    const sx = e.clientX, sy = e.clientY;
-    const apply = () => { clearTimeout(timer); timer = window.setTimeout(() => applyDock(mode).catch(() => {}), 60); };
+    // Screen coordinates, not clientX/Y: the window resizes and moves under the pointer while the
+    // strip grows, so clientX/Y (relative to the moving window) barely changed and the strip grew far
+    // less than the pointer travelled (2026-11-18 사용자: 드래그해서 키운 만큼 안 커져).
+    const sx = e.screenX, sy = e.screenY;
+    // Anchor to the CURRENT window rect, not the monitor work area: once docked, the AppBar
+    // reservation has already shrunk the work area by this strip's own thickness, so the work area's
+    // far edge is the top of the strip, not the screen edge — anchoring to it left a gap below the
+    // strip and the strip drifted / popped out of the dock while resizing (2026-11-18 사용자: 아래
+    // 여백·독에서 떨어져 나옴). The live resize is a plain setSize/setPosition; the AppBar is
+    // re-registered once at the end (applyDock), which snaps to the exact reserved rect.
+    let geo: { x: number; y: number; w: number; h: number; scale: number } | null = null;
+    let handle: Awaited<ReturnType<typeof win>> | null = null;
+    if (inTauri) {
+      try {
+        handle = await win();
+        const [p0, s0, scale] = await Promise.all([handle.w.outerPosition(), handle.w.outerSize(), handle.w.scaleFactor()]);
+        geo = { x: p0.x, y: p0.y, w: s0.width, h: s0.height, scale: scale || 1 };
+      } catch { /* fall back to the end-of-drag applyDock */ }
+    }
+    // The strip's physical rect for a thickness, anchored to the current window's far / near edge.
+    const rectFor = (thick: number) => {
+      let x = geo!.x, y = geo!.y, width = geo!.w, height = geo!.h;
+      if (mode === "top") height = thick;
+      else if (mode === "bottom") { y = geo!.y + geo!.h - thick; height = thick; }
+      else if (mode === "left") width = thick;
+      else { x = geo!.x + geo!.w - thick; width = thick; }
+      return { x, y, w: width, h: height };
+    };
+    let busy = false, dirty = false, released = false;
+    const liveResize = async () => {
+      if (!geo || !handle || released) return;
+      if (busy) { dirty = true; return; }
+      busy = true;
+      // dock_pin positions the window atomically and updates the guard rect, so the shell can never
+      // pull it off the pinned spot while resizing (2026-11-18).
+      await invoke("dock_pin", rectFor(Math.round(settings.dockSize * geo.scale))).catch(() => {});
+      busy = false;
+      if (dirty && !released) { dirty = false; void liveResize(); }
+    };
     const move = (ev: PointerEvent) => {
       // the inner edge follows the pointer: a top strip grows downward, a bottom strip upward, etc.
-      const d = mode === "top" ? ev.clientY - sy : mode === "bottom" ? sy - ev.clientY : mode === "left" ? ev.clientX - sx : sx - ev.clientX;
+      const d = mode === "top" ? ev.screenY - sy : mode === "bottom" ? sy - ev.screenY : mode === "left" ? ev.screenX - sx : sx - ev.screenX;
       const next = Math.max(48, Math.min(900, Math.round(start + d)));
-      if (next !== settings.dockSize) { settings.dockSize = next; saveSettings(); apply(); }
+      if (next !== settings.dockSize) { settings.dockSize = next; void liveResize(); }
     };
-    const up = (ev: PointerEvent) => {
+    const up = async (ev: PointerEvent) => {
       grip.removeEventListener("pointermove", move);
       grip.removeEventListener("pointerup", up);
       grip.removeEventListener("pointercancel", up);
       try { grip.releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
-      clearTimeout(timer);
-      applyDock(mode).catch(() => {});
+      released = true; // stop any queued live-resize frame from firing after this
+      saveSettings();
+      // Now update the AppBar reservation to the new thickness so other windows reflow to the resized
+      // strip (2026-11-18 사용자: 늘린 만큼 여백 할당이 바뀌어야). Changing the reservation makes the
+      // shell try to pull our window into the shrunk work area, but the dock_pin guard (lib.rs) holds
+      // it on the pinned rect, so there is no float — measured via CDP.
+      if (!inTauri || !geo || !handle) { applyDock(mode).catch(() => {}); return; }
+      const thick = Math.round(settings.dockSize * geo.scale);
+      const edge = { left: 0, top: 1, right: 2, bottom: 3 }[mode];
+      await invoke("dock_pin", rectFor(thick)).catch(() => {});
+      await invoke("set_appbar", { edge, thickness: thick }).catch(() => {});
     };
     grip.addEventListener("pointermove", move);
     grip.addEventListener("pointerup", up);
@@ -125,6 +168,7 @@ export function installDockGrip() {
 /** Startup while undocked: make sure no AppBar reservation lingers from an earlier session of this process. */
 export async function releaseDockReservation() {
   if (!inTauri) return;
+  await invoke("dock_unpin").catch(() => {});
   await invoke("set_appbar", { edge: null, thickness: 0 }).catch(() => {});
 }
 
