@@ -42,7 +42,7 @@ Windows에서 나는 모든 소리(브라우저, 게임, REAPER 같은 DAW, 언�
 - 툴바 오른쪽 끝 **🐱 버튼**(켜지면 😺): 화면 오른쪽 아래, 작업 표시줄 바로 위에 배경 없는 작은 창이 뜬다 — 노을 창가의 고양이·라디오·피아노·램프·머그 그림이 소리에 반응한다(라디오 바·음표·램프 밝기·김·비, 조용하면 고양이가 잠든다). 항상 위, 작업 표시줄에 안 보임. 끌어서 옮기고, **왼쪽 위 모서리 그립**을 끌어 크기를 바꾼다(5:3 유지, 오른쪽 아래 고정; 위치·크기 기억). 우클릭 = Cozy 설정(비 효과, 잠드는 dB)과 닫기, 마우스를 올리면 ✕.
 - 같은 **Cozy 모듈**이다: 타일에서는 황혼 배경 위에 그림이 맞춰 들어가고, 미니 창에서는 배경 없이 모서리에 붙는다. 설정은 하나.
 - 그림 바꾸기: `public/cozy/corner*.png`(5:3, 800×480, 투명 배경 PNG)는 아래 두 스크립트로 만든다. 그림 속 램프·라디오·머그·창·건반·화분 자리는 `src/modules/cozy.ts drawArt`의 좌표(장면 단위, 그림 px ÷ 5)를 맞춘다.
-- 재생 중 놀이 포즈 2개(`corner_play1~2.png`, 그루밍·기지개)가 12~25초마다 바뀐다. 장면 그림 전체(누운·잠든·놀이 포즈, 흔들리는 화분 잎 `corner_plant.png`, 창 하늘 마스크)는 고양이 없는 방 그림과 투명 배경 고양이 그림들로 다시 만든다: `python -I -X utf8 scripts/cozy_new_bg.py <방.png> <catless.png>` → `python -I -X utf8 scripts/cozy_build_scene.py <catless.png> <고양이 폴더: loaf/sleep/groom/stretch.png> public/cozy`.
+- 재생 중 놀이 포즈 2개(`corner_play1~2.png`, 그루밍·기지개)는 가끔만 나온다 — 머리 든 기본 자세가 기본이고, 재생 중 20~40초마다 25 % 확률로 6~10초 동안 놀이 포즈. 장면 그림 전체(누운·잠든·놀이 포즈, 흔들리는 화분 잎 `corner_plant.png`, 창 하늘 마스크)는 고양이 없는 방 그림과 투명 배경 고양이 그림들로 다시 만든다: `python -I -X utf8 scripts/cozy_new_bg.py <방.png> <catless.png>` → `python -I -X utf8 scripts/cozy_build_scene.py <catless.png> <고양이 폴더: loaf/sleep/groom/stretch.png> public/cozy`.
 
 ## 도킹
 - 도킹 ▾ 위/아래/왼쪽/오른쪽: 창이 그 가장자리의 얇은 띠가 된다. Windows에서는 **AppBar(작업 표시줄 같은 예약 영역)** 로 등록돼 다른 창을 최대화해도 띠를 덮지 않고 그만큼 비켜 선다(MiniMeters 방식). 해제하면 예약을 풀고 원래 창 크기·위치로 돌아온다.

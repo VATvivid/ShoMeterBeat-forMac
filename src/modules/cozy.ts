@@ -107,8 +107,8 @@ export class CozyModule implements Module {
    * Play poses (2026-11-17 사용자: 소리가 나는 동안 가끔 랜덤 포즈; 2026-11-18 새 배경·새 고양이 그림으로
    * 그루밍·기지개 2개만 — 실타래·앉아 조는 포즈는 뺌). Optional pictures public/cozy/corner_play1.png (groom),
    * corner_play2.png (stretch), same composition as corner.png
-   * (only the cat differs). While sound plays, every 12–25 s the cat switches to a random pose
-   * (or back to the base picture) with a 0.8 s cross-fade; when the sound stops it settles back
+   * (only the cat differs). The base picture (head up) is home: while sound plays, every 20–40 s
+   * there is a 25 % chance of a play pose for 6–10 s, with a 0.8 s cross-fade; when the sound stops it settles back
    * on the base picture before dozing off. Missing files are simply never picked.
    */
   private poses: (HTMLImageElement | null)[] = [null, null];
@@ -137,9 +137,17 @@ export class CozyModule implements Module {
     const want = (target: number) => { if (target !== this.poseFrom) { this.poseTo = target; this.poseFade = 0; } };
     if (!playing || this.awake < 0.6) { if (this.poseFrom !== -1) want(-1); this.nextPoseAt = this.t + 8 + Math.random() * 10; return; }
     if (!avail.length || this.t < this.nextPoseAt) return;
-    const choices = [-1, ...avail].filter((i) => i !== this.poseFrom);
-    want(choices[Math.floor(Math.random() * choices.length)]);
-    this.nextPoseAt = this.t + 12 + Math.random() * 13;
+    // (2026-11-18 사용자: 머리 든 기본 자세가 기본, 기지개·그루밍 등은 낮은 확률) — the base picture is
+    // home: every 20–40 s there is a 25 % chance of a play pose, which lasts 6–10 s and returns home
+    if (this.poseFrom !== -1) {
+      want(-1);
+      this.nextPoseAt = this.t + 20 + Math.random() * 20;
+    } else if (Math.random() < 0.25) {
+      want(avail[Math.floor(Math.random() * avail.length)]);
+      this.nextPoseAt = this.t + 6 + Math.random() * 4;
+    } else {
+      this.nextPoseAt = this.t + 20 + Math.random() * 20;
+    }
   }
 
   /** Paints `color` over the sky pixels only, with the given composite and alpha. */
@@ -564,16 +572,25 @@ export class CozyModule implements Module {
       ctx.fillRect(ox + (win.x - 50) * s, oy + (win.y + 20) * s, (win.w + 70) * s, (win.h + 10) * s);
       ctx.restore();
     }
-    // ---- the big plant on the left sways gently while sound plays (calm, no strength), around the pot rim
+    // ---- the big plant on the left sways gently while sound plays (calm, no strength). It bends rather
+    // than rotating as a block (2026-11-18 사용자: 상하단이 분리되어 움직여 어색) — each row of the leaf
+    // layer is shifted sideways by an amount that is 0 at the pot rim and grows towards the top (h^1.6),
+    // with the top lagging behind the base like a stem whipping, so it joins the still part seamlessly
     if (this.plantOk && this.plantArt) {
-      const pv = { x: 27.2, y: 69.3 };   // the big plant's pot rim
-      // three incommensurate slow waves → never repeats, never jerks; ±~4.5° at the leaf tips
-      const ang = this.plantSway * (0.55 * Math.sin(this.t * 0.75 + this.swayPh[0]) + 0.3 * Math.sin(this.t * 1.31 + this.swayPh[1]) + 0.15 * Math.sin(this.t * 2.17)) * (Math.PI / 180) * 4.5;
+      const img = this.plantArt;
+      const iw = img.naturalWidth || 800;
+      const u = MINI_W / iw;                       // scene units per art px
+      const rim = 69.3, top = 47;                  // the pot rim and the crown's top (scene units)
+      const amp = 2.4 * this.plantSway;            // sideways shift at the top (scene units)
+      const wave = (t: number) => 0.55 * Math.sin(t * 0.75 + this.swayPh[0]) + 0.3 * Math.sin(t * 1.31 + this.swayPh[1]) + 0.15 * Math.sin(t * 2.17);
       ctx.save();
       ctx.imageSmoothingEnabled = true;
-      ctx.translate(ox + pv.x * s, oy + pv.y * s);
-      ctx.rotate(ang);
-      ctx.drawImage(this.plantArt, -pv.x * s, -pv.y * s, MINI_W * s, MINI_H * s);
+      const y0 = Math.floor(top / u), y1 = Math.ceil((rim + 5) / u);
+      for (let ry = y0; ry < y1; ry += 2) {
+        const h = Math.max(0, Math.min(1, (rim - ry * u) / (rim - top)));
+        const dx = amp > 0.001 ? amp * Math.pow(h, 1.6) * wave(this.t - 0.5 * h) : 0;
+        ctx.drawImage(img, 0, ry, iw, 2, ox + dx * s, oy + ry * u * s, MINI_W * s, 2 * u * s + 0.6);
+      }
       ctx.restore();
     }
     // lamp: the new picture (2026-11-18) paints the lamp unlit (grey bulb), so silence needs nothing —
