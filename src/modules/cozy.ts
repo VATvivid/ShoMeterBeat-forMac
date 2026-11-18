@@ -324,7 +324,8 @@ export class CozyModule implements Module {
     const playing = this.level > this.sleepDb;
     this.quietFor = playing ? 0 : this.quietFor + dt;
     const wantAwake = this.quietFor < 2 ? 1 : 0;
-    this.awake += (wantAwake - this.awake) * Math.min(1, dt * (wantAwake ? 3 : 0.8));
+    // raising the head (waking) is gentler than before (2026-11-18 사용자: 고개 들 때 좀 더 천천히)
+    this.awake += (wantAwake - this.awake) * Math.min(1, dt * (wantAwake ? 1.6 : 0.8));
     // lamp: on with the music (brightness follows the level), off in silence (2026-11-17 사용자:
     // 음악이 없을 때 스탠드가 꺼져 보이게) — switches on quickly, fades off over ~1.5 s
     const target = playing ? 0.55 + 0.45 * Math.max(0, Math.min(1, (this.level + 45) / 35)) : 0;

@@ -64,6 +64,11 @@ def scaled(im, f):
     rr = np.array(Image.fromarray(x.clip(0, 255).astype(np.uint8), "RGBA").resize((w, h), Image.LANCZOS)).astype(np.float32)
     al = rr[..., 3:4] / 255
     rr[..., :3] = np.where(al > 0.01, rr[..., :3] / np.maximum(al, 0.01), 0)
+    # Trim the soft anti-aliased rim: the user's cats have a faint light halo that reads as a white
+    # dashed outline over the dark window when sleeping (2026-11-18 사용자: 자고 있을 때 창문에 자국).
+    # Erode the alpha by ~1 px (drops the fringe ring) and steepen what remains for a crisp edge.
+    er = np.array(Image.fromarray(rr[..., 3].astype(np.uint8)).filter(ImageFilter.MinFilter(3))).astype(np.float32)
+    rr[..., 3] = np.clip((er - 45) * 1.5, 0, 255)
     return rr
 
 

@@ -353,6 +353,41 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     }
   });
 
+  // ---- narrow (left / right) dock: fold the whole toolbar into one ☰ tree menu -------
+  // A left/right strip is too narrow for the horizontal toolbar, so its controls were cut off
+  // (2026-11-18 사용자). When docked left/right the controls are relocated into the ☰ menu-panel,
+  // stacked vertically; each sub-menu (모듈/도킹/프리셋/창) opens inline (accordion tree) instead of as
+  // a clipped popover. Comment placeholders mark each control's home so it restores exactly on undock.
+  {
+    const menuBtn = $("menu-btn");
+    const menuPanel = $("menu-panel");
+    // own toggle (not wireMenu) so the nested menus' closeAllMenus does not also close this container
+    menuBtn.addEventListener("click", (e) => { e.stopPropagation(); menuPanel.classList.toggle("hidden"); });
+    menuPanel.addEventListener("click", (e) => e.stopPropagation());
+    document.addEventListener("click", () => menuPanel.classList.add("hidden"));
+    const items: HTMLElement[] = [
+      $("device-select"), $("rec-btn"), $("rec-time"),
+      $("modules-btn").closest(".menu") as HTMLElement,
+      $("edit-btn"),
+      $("dock-btn").closest(".menu") as HTMLElement,
+      $("preset-btn").closest(".menu") as HTMLElement,
+      $("win-btn").closest(".menu") as HTMLElement,
+      $("reset-layout-btn"), $("install-plugin-btn"), $("mini-btn"),
+    ].filter(Boolean) as HTMLElement[];
+    const home = items.map((el) => ({ el, ph: document.createComment("tb") }));
+    let collapsed = false;
+    const setCollapsed = (on: boolean) => {
+      if (on === collapsed) return;
+      collapsed = on;
+      document.body.classList.toggle("dock-vertical", on);
+      if (on) { for (const h of home) { h.el.replaceWith(h.ph); menuPanel.appendChild(h.el); } }
+      else { for (const h of home) h.ph.replaceWith(h.el); menuPanel.classList.add("hidden"); closeAllMenus(); }
+    };
+    const apply = () => setCollapsed(document.body.dataset.dock === "left" || document.body.dataset.dock === "right");
+    apply();
+    new MutationObserver(apply).observe(document.body, { attributes: true, attributeFilter: ["data-dock"] });
+  }
+
   // ---- status bar ------------------------------------------------------------
   const stDevice = $("st-device"), stRate = $("st-rate"), stFps = $("st-fps"), stState = $("st-state");
   let frames = 0, fpsAt = performance.now();

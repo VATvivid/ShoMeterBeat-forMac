@@ -63,6 +63,18 @@ body { display: flex; flex-direction: column; }
 }
 .tb-group { display: flex; align-items: center; gap: 6px; }
 .tb-right { margin-left: auto; }
+/* narrow (left/right) dock: the whole toolbar folds into the ☰ menu (toolbar.ts). Hide the normal
+   groups, show ☰, and stack its contents vertically with sub-menus opening inline as a tree. */
+.tb-menu-group { display: none; }
+body.dock-vertical .tb-menu-group { display: flex; }
+body.dock-vertical #toolbar > .tb-group:not(.tb-menu-group) { display: none; }
+body.dock-vertical #toolbar { gap: 0; padding: 0 4px; justify-content: flex-start; }
+body.dock-vertical #menu-panel { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 150px; max-width: calc(100vw - 16px); max-height: calc(100vh - 44px); overflow-y: auto; }
+body.dock-vertical #menu-panel > .btn, body.dock-vertical #menu-panel > select, body.dock-vertical #menu-panel > .menu > .btn { width: 100%; text-align: left; justify-content: flex-start; }
+body.dock-vertical #menu-panel .menu { width: 100%; position: static; }
+/* sub-menus flow inline (accordion tree) instead of as a clipped absolute popover */
+body.dock-vertical #menu-panel .popover { position: static; box-shadow: none; margin: 2px 0 4px 10px; border-left: 2px solid var(--line); border-radius: 0; background: transparent; min-width: 0; }
+body.dock-vertical #menu-panel #rec-time { align-self: flex-start; }
 .app-name {
   font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
 }
