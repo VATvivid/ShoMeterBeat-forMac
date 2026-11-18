@@ -104,21 +104,22 @@ export class CozyModule implements Module {
   private skyBias = 0;
 
   /**
-   * Play poses (2026-11-17 사용자: 소리가 나는 동안 가끔 랜덤 포즈 — 뒤집어 실타래 놀기 등 3개, 이어서
-   * 사용자 그림의 앉아 조는 고양이 1개 추가). Optional pictures public/cozy/corner_play1.png … corner_play4.png, same composition as corner.png
+   * Play poses (2026-11-17 사용자: 소리가 나는 동안 가끔 랜덤 포즈; 2026-11-18 새 배경·새 고양이 그림으로
+   * 그루밍·기지개 2개만 — 실타래·앉아 조는 포즈는 뺌). Optional pictures public/cozy/corner_play1.png (groom),
+   * corner_play2.png (stretch), same composition as corner.png
    * (only the cat differs). While sound plays, every 12–25 s the cat switches to a random pose
    * (or back to the base picture) with a 0.8 s cross-fade; when the sound stops it settles back
    * on the base picture before dozing off. Missing files are simply never picked.
    */
-  private poses: (HTMLImageElement | null)[] = [null, null, null, null];
-  private poseSky: (HTMLImageElement | null)[] = [null, null, null, null];
-  private poseSkyOk = [false, false, false, false];
+  private poses: (HTMLImageElement | null)[] = [null, null];
+  private poseSky: (HTMLImageElement | null)[] = [null, null];
+  private poseSkyOk = [false, false];
   /** Sky mask for what is on screen: the play pose's own mask once its cross-fade is past halfway. */
   private currentSky(): HTMLImageElement {
     const i = this.poseFade < 0.5 ? this.poseFrom : this.poseTo;
     return i >= 0 && this.poseSkyOk[i] && this.poseSky[i] ? this.poseSky[i]! : this.skyMask!;
   }
-  private posesOk = [false, false, false, false];
+  private posesOk = [false, false];
   private poseFrom = -1;               // −1 = base picture
   private poseTo = -1;
   private poseFade = 1;                // 0 → 1 while cross-fading from → to
@@ -145,7 +146,7 @@ export class CozyModule implements Module {
   private tintSky(ctx: CanvasRenderingContext2D, color: string, op: GlobalCompositeOperation, alpha: number, ox: number, oy: number, s: number) {
     const m = this.currentSky();
     let c = this.tintCanvas;
-    if (!c) { c = document.createElement("canvas"); c.width = m.naturalWidth || 424; c.height = m.naturalHeight || 257; this.tintCanvas = c; }
+    if (!c) { c = document.createElement("canvas"); c.width = m.naturalWidth || 800; c.height = m.naturalHeight || 480; this.tintCanvas = c; }
     const t = c.getContext("2d");
     if (!t) return;
     t.globalCompositeOperation = "source-over";
@@ -183,7 +184,7 @@ export class CozyModule implements Module {
       sk.onerror = () => { this.skyOk = false; };
       sk.src = "/cozy/corner_sky.png";
       this.skyMask = sk;
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < this.poses.length; i++) {
         const p = new Image();
         p.onload = () => { this.posesOk[i] = p.naturalWidth > 0; };
         p.onerror = () => { this.posesOk[i] = false; };
@@ -523,7 +524,7 @@ export class CozyModule implements Module {
       // wakes (sound starts) and out as it dozes off (quiet for 2 s)
       ctx.drawImage(this.sleepArt, ox, oy, MINI_W * s, MINI_H * s);
     }
-    // awake: the base picture, or one of the play poses (corner_play1–4.png) cross-fading in/out
+    // awake: the base picture, or one of the play poses (corner_play1–2.png) cross-fading in/out
     const from = this.poseImg(this.poseFrom), to = this.poseImg(this.poseTo);
     const pf = this.poseFade;
     ctx.globalAlpha = aw;
@@ -533,8 +534,8 @@ export class CozyModule implements Module {
       ctx.drawImage(to, ox, oy, MINI_W * s, MINI_H * s);
     }
     ctx.restore();
-    // calibration (scene units, 160×96 over the 424×257 picture ≈ ×0.377)
-    const lamp = { x: 140, y: 26 }, radio = { x: 62, y: 74, w: 15, h: 7 }, mug = { x: 50, y: 72 }, win = { x: 83, y: 9, w: 43, h: 66 }, keys = { x: 127, y: 68, w: 33 };
+    // calibration (scene units, 160×96 over the 800×480 picture = ×0.2; 2026-11-18 새 배경)
+    const lamp = { x: 140.7, y: 29.9 }, radio = { x: 56.8, y: 62.2, w: 15, h: 7 }, mug = { x: 49.3, y: 72.5 }, win = { x: 81.8, y: 19.4, w: 44.1, h: 56.3 }, keys = { x: 129, y: 72.5, w: 29 };
     // ---- the sky outside and the light it lets in (2026-11-17: beams felt stencilled — replaced)
     let lightSum = 0;
     for (let i = 0; i < 5; i++) lightSum += this.light[i];
@@ -565,7 +566,7 @@ export class CozyModule implements Module {
     }
     // ---- the big plant on the left sways gently while sound plays (calm, no strength), around the pot rim
     if (this.plantOk && this.plantArt) {
-      const pv = { x: 29.4, y: 71.7 };
+      const pv = { x: 27.2, y: 69.3 };   // the big plant's pot rim
       // three incommensurate slow waves → never repeats, never jerks; ±~4.5° at the leaf tips
       const ang = this.plantSway * (0.55 * Math.sin(this.t * 0.75 + this.swayPh[0]) + 0.3 * Math.sin(this.t * 1.31 + this.swayPh[1]) + 0.15 * Math.sin(this.t * 2.17)) * (Math.PI / 180) * 4.5;
       ctx.save();
@@ -575,24 +576,16 @@ export class CozyModule implements Module {
       ctx.drawImage(this.plantArt, -pv.x * s, -pv.y * s, MINI_W * s, MINI_H * s);
       ctx.restore();
     }
-    // lamp off: the painting's lit bulb and the warm light under the shade are darkened (only over
-    // the picture, "source-atop"), fading in as the lamp fades out
-    {
-      const off = 1 - Math.max(0, Math.min(1, this.lamp / 0.5));
-      if (off > 0.01) {
-        const bx = ox + lamp.x * s, by = oy + (lamp.y + 2) * s;
-        ctx.save();
-        ctx.globalCompositeOperation = "source-atop";
-        const dk = ctx.createRadialGradient(bx, by, 0, bx, by, 24 * s);
-        const shade = mix(tok("line"), tok("dusk3"), 0.35);
-        dk.addColorStop(0, withAlpha(shade, 0.85 * off)); dk.addColorStop(0.3, withAlpha(shade, 0.65 * off)); dk.addColorStop(1, withAlpha(shade, 0));
-        ctx.fillStyle = dk;
-        ctx.fillRect(bx - 24 * s, by - 16 * s, 48 * s, 44 * s);
-        ctx.restore();
-      }
+    // lamp: the new picture (2026-11-18) paints the lamp unlit (grey bulb), so silence needs nothing —
+    // with music the bulb itself lights up (warm-white core), then the wide glow around it
+    const a = this.lamp * (this.flicker > 0 && Math.sin(this.t * 60) > 0 ? 0.4 : 1);
+    if (a > 0.01) {
+      const bx = ox + lamp.x * s, by = oy + lamp.y * s;
+      const bg = ctx.createRadialGradient(bx, by, 0, bx, by, 6 * s);
+      bg.addColorStop(0, `rgba(255,246,224,${0.95 * a})`); bg.addColorStop(0.45, withAlpha(tok("brass"), 0.7 * a)); bg.addColorStop(1, withAlpha(tok("brass"), 0));
+      ctx.fillStyle = bg; ctx.fillRect(bx - 6 * s, by - 6 * s, 12 * s, 12 * s);
     }
     // lamp glow
-    const a = this.lamp * (this.flicker > 0 && Math.sin(this.t * 60) > 0 ? 0.4 : 1);
     // (2026-11-17 사용자: 조금 더 강하게 — 중심 0.35 → 0.5, 반경 40 → 46, 중간 단계로 넓게 퍼짐)
     const g = ctx.createRadialGradient(ox + lamp.x * s, oy + lamp.y * s, s, ox + lamp.x * s, oy + lamp.y * s, 46 * s);
     g.addColorStop(0, withAlpha(tok("brass"), 0.5 * a)); g.addColorStop(0.4, withAlpha(tok("brass"), 0.2 * a)); g.addColorStop(1, withAlpha(tok("brass"), 0));
@@ -603,7 +596,7 @@ export class CozyModule implements Module {
     // painting's own amber display glows: five soft vertical light columns, one per band, added
     // ("lighter") inside the display only, so the painted equaliser itself seems to light up
     {
-      const disp = { x: 57, y: 67, w: 23, h: 12 };
+      const disp = { x: 55.3, y: 71.2, w: 24, h: 7.3 };
       ctx.save();
       ctx.beginPath(); ctx.rect(ox + disp.x * s, oy + disp.y * s, disp.w * s, disp.h * s); ctx.clip();
       ctx.globalCompositeOperation = "lighter";
@@ -646,10 +639,21 @@ export class CozyModule implements Module {
     if (playing && (this.bob > 0.95 || Math.random() < this.frameDt * 0.9)) {
       this.notes.push({ x: keys.x + Math.random() * (keys.w - 4), y: keys.y - 2, life: 0, max: 1.8 + Math.random() * 0.8, drift: Math.random() * 2 - 1 });
     }
-    // sleeping: zzz near the cat's head (the painting's cat keeps its eyes as drawn)
+    // sleeping: soft "z"s rising from the lowered head (scene ≈ 94, 70). They were 2×1 dark dashes over
+    // the window, which read as stray marks above the plant (2026-11-17 사용자: 식물 위쪽 이상한 자국)
     if (this.awake < 0.3) {
       const ph = this.zz % 2.4;
-      for (let i = 0; i < 3; i++) { const t = ph - i * 0.6; if (t < 0 || t > 1.8) continue; S.rect(104 + i * 3, 58 - Math.round(t * 4), 2, 1, withAlpha(tok("line"), 0.8 * (1 - t / 1.8))); }
+      ctx.save();
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (let i = 0; i < 3; i++) {
+        const t = ph - i * 0.6;
+        if (t < 0 || t > 1.8) continue;
+        const al = Math.min(1, t / 0.3) * (1 - t / 1.8);
+        ctx.font = `${Math.max(8, Math.round((2.6 + i * 0.7) * s))}px "Segoe UI", sans-serif`;
+        ctx.fillStyle = withAlpha(mix(tok("w"), tok("dusk2"), 0.25), 0.8 * al);
+        ctx.fillText("z", ox + (94.3 - i * 2.5 - t * 1.5) * s, oy + (67.8 - i * 2.5 - t * 4) * s);
+      }
+      ctx.restore();
     }
   }
 
