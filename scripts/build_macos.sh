@@ -33,6 +33,18 @@ echo "    rustc  $(rustc --version)"
 echo "    node   $(node --version)"
 echo "    cmake  $(cmake --version | head -1)"
 
+# --- libclang for bindgen (whisper-rs-sys) ---------------------------------------
+# bindgen panics "Unable to find libclang" unless LIBCLANG_PATH points at one; Xcode ships it.
+if [ -z "${LIBCLANG_PATH:-}" ]; then
+  DEV="$(xcode-select -p)"
+  for d in "$DEV/Toolchains/XcodeDefault.xctoolchain/usr/lib" "$DEV/usr/lib" "$(brew --prefix llvm 2>/dev/null)/lib"; do
+    if [ -f "$d/libclang.dylib" ]; then export LIBCLANG_PATH="$d"; break; fi
+  done
+  [ -n "${LIBCLANG_PATH:-}" ] || { echo "!! libclang not found — run:  brew install llvm"; exit 1; }
+fi
+export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--isysroot $(xcrun --show-sdk-path)}"
+echo "    libclang $LIBCLANG_PATH"
+
 # --- models (onnxruntime dylib for this arch + whisper base/small + yamnet/nmp) --
 echo "==> Fetching AI models into src-tauri/models (one-time, a few hundred MB)"
 python3 -I -X utf8 scripts/fetch_models.py --whisper base

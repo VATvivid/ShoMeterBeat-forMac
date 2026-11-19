@@ -26,7 +26,18 @@ jobs:
           cmake --version
           clang --version
 
-      # ONNX Runtime dylib (host OS) + whisper base/small + yamnet/nmp into src-tauri/models/
+      # whisper-rs-sys runs bindgen, which needs libclang (bindgen panics "Unable to find libclang" otherwise).
+      # Xcode's toolchain ships one; point LIBCLANG_PATH at it and give clang the SDK sysroot for system headers.
+      - name: libclang for bindgen (whisper-rs)
+        run: |
+          DEV="$(xcode-select -p)"
+          for d in "$DEV/Toolchains/XcodeDefault.xctoolchain/usr/lib" "$DEV/usr/lib" "$(brew --prefix llvm 2>/dev/null)/lib"; do
+            if [ -f "$d/libclang.dylib" ]; then echo "LIBCLANG_PATH=$d" >> "$GITHUB_ENV"; echo "libclang: $d"; FOUND=1; break; fi
+          done
+          if [ -z "${FOUND:-}" ]; then brew install llvm; echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"; fi
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot $(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+      # whisper base/small + yamnet/nmp into src-tauri/models/ (ONNX Runtime itself comes from the ort crate)
       - name: Fetch models
         run: |
           python3 -I -X utf8 scripts/fetch_models.py --whisper base
