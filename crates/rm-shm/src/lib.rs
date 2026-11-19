@@ -1,9 +1,10 @@
 //! Lock-free shared-memory bridge: DAW plugin instances (writers) → ShowMeterBeat app (reader).
 //!
-//! One named file mapping (`Local\re-minimeter-bridge-v1`) holds `SLOTS` slots. A plugin
-//! instance claims a slot whose heartbeat is stale, then every process() call writes
+//! One named shared mapping holds `SLOTS` slots — a Win32 file mapping (`Local\re-minimeter-bridge-v1`)
+//! on Windows, a POSIX shared-memory object (`/smb-bridge-v1`, shm_open + mmap) on macOS/Linux.
+//! A plugin instance claims a slot whose heartbeat is stale, then every process() call writes
 //! interleaved stereo f32 into the slot ring and bumps `write_pos` + `heartbeat`.
-//! The app sums every live slot. Everything is plain atomics on x86-64; no locks.
+//! The app sums every live slot. Everything is plain atomics (x86-64 / arm64); no locks.
 //!
 //! Layout (bytes):
 //!   0    u32 magic 0x484D5352 ("RSMH")   4 u32 version
@@ -13,7 +14,9 @@
 //!   16 AtomicU32 sample_rate   20 AtomicU32 channels  24 AtomicU32 pid  28.. reserved → 64
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+#[cfg(windows)]
 use windows_sys::Win32::System::Memory::{
     CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
 };
@@ -27,7 +30,11 @@ pub const SLOT_HEADER: usize = 64;
 pub const SLOT_BYTES: usize = SLOT_HEADER + RING_FRAMES * 2 * 4;
 pub const TOTAL_BYTES: usize = GLOBAL_HEADER + SLOTS * SLOT_BYTES;
 pub const STALE_MS: u64 = 1500;
+#[cfg(windows)]
 const NAME: &str = "Local\\re-minimeter-bridge-v1";
+// POSIX shm names start with '/' and macOS caps them at 31 chars.
+#[cfg(unix)]
+const NAME: &str = "/smb-bridge-v1";
 
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -37,6 +44,7 @@ pub fn now_ms() -> u64 {
 }
 
 pub struct Mapping {
+    #[cfg(windows)]
     handle: HANDLE,
     base: *mut u8,
 }
@@ -44,8 +52,19 @@ pub struct Mapping {
 unsafe impl Send for Mapping {}
 unsafe impl Sync for Mapping {}
 
+/// First opener of a fresh (zero-filled) mapping stamps the magic + version.
+unsafe fn init_header(base: *mut u8) {
+    let magic = &*(base as *const AtomicU32);
+    let version = &*(base.add(4) as *const AtomicU32);
+    if magic.load(Ordering::Acquire) != MAGIC {
+        version.store(VERSION, Ordering::Release);
+        magic.store(MAGIC, Ordering::Release);
+    }
+}
+
 impl Mapping {
     /// Opens (or creates, zero-filled) the shared mapping.
+    #[cfg(windows)]
     pub fn open() -> Result<Self, String> {
         let wide: Vec<u16> = NAME.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
@@ -66,13 +85,40 @@ impl Mapping {
                 return Err("MapViewOfFile failed".into());
             }
             let base = view.Value as *mut u8;
-            let magic = &*(base as *const AtomicU32);
-            let version = &*(base.add(4) as *const AtomicU32);
-            if magic.load(Ordering::Acquire) != MAGIC {
-                version.store(VERSION, Ordering::Release);
-                magic.store(MAGIC, Ordering::Release);
-            }
+            init_header(base);
             Ok(Self { handle, base })
+        }
+    }
+
+    /// Opens (or creates, zero-filled) the shared mapping — POSIX shared memory (macOS / Linux).
+    #[cfg(unix)]
+    pub fn open() -> Result<Self, String> {
+        let cname = std::ffi::CString::new(NAME).map_err(|e| e.to_string())?;
+        unsafe {
+            let fd = libc::shm_open(cname.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600 as libc::c_uint);
+            if fd < 0 {
+                return Err(format!("shm_open failed: {}", std::io::Error::last_os_error()));
+            }
+            // Size it only when it is new: on macOS ftruncate on an already-sized shm object fails with EINVAL.
+            let mut st: libc::stat = std::mem::zeroed();
+            if libc::fstat(fd, &mut st) != 0 {
+                let e = std::io::Error::last_os_error();
+                libc::close(fd);
+                return Err(format!("fstat failed: {e}"));
+            }
+            if (st.st_size as u64) < TOTAL_BYTES as u64 && libc::ftruncate(fd, TOTAL_BYTES as libc::off_t) != 0 {
+                let e = std::io::Error::last_os_error();
+                libc::close(fd);
+                return Err(format!("ftruncate failed: {e}"));
+            }
+            let p = libc::mmap(std::ptr::null_mut(), TOTAL_BYTES, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
+            libc::close(fd); // the mapping outlives the descriptor
+            if p == libc::MAP_FAILED {
+                return Err(format!("mmap failed: {}", std::io::Error::last_os_error()));
+            }
+            let base = p as *mut u8;
+            init_header(base);
+            Ok(Self { base })
         }
     }
 
@@ -99,8 +145,17 @@ impl Mapping {
 impl Drop for Mapping {
     fn drop(&mut self) {
         unsafe {
-            UnmapViewOfFile(windows_sys::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS { Value: self.base as _ });
-            CloseHandle(self.handle);
+            #[cfg(windows)]
+            {
+                UnmapViewOfFile(windows_sys::Win32::System::Memory::MEMORY_MAPPED_VIEW_ADDRESS { Value: self.base as _ });
+                CloseHandle(self.handle);
+            }
+            // POSIX: unmap only — the object stays for the other process (no shm_unlink), as on Windows
+            // where the mapping lives while any handle is open.
+            #[cfg(unix)]
+            {
+                libc::munmap(self.base as *mut libc::c_void, TOTAL_BYTES);
+            }
         }
     }
 }

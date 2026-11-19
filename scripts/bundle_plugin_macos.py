@@ -24,7 +24,15 @@ if "--no-build" not in sys.argv:
     cargo = os.path.join(os.path.expanduser("~"), ".cargo", "bin", "cargo")
     if not os.path.exists(cargo):
         cargo = "cargo"
-    subprocess.run([cargo, "build", "--release"], cwd=CRATE, check=True)
+    r = subprocess.run([cargo, "build", "--release"], cwd=CRATE, capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    if r.returncode != 0:
+        # surface the compiler's own error lines as GitHub Actions annotations (the step log needs auth)
+        errs = [l for l in r.stderr.splitlines() if l.startswith("error")][:6]
+        for l in errs or ["cargo build failed (no 'error' lines captured)"]:
+            print(f"::error::plugin build: {l[:900]}")
+        sys.exit(r.returncode)
 
 dylib = os.path.join(CRATE, "target", "release", "librm_send_plugin.dylib")
 if not os.path.exists(dylib):
