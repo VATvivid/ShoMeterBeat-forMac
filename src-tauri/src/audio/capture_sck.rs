@@ -9,7 +9,7 @@
 
 use super::Shared;
 use screencapturekit::{
-    cm_sample_buffer::CMSampleBuffer,
+    output::CMSampleBuffer,
     shareable_content::SCShareableContent,
     stream::{
         configuration::SCStreamConfiguration, content_filter::SCContentFilter, output_trait::SCStreamOutputTrait,
@@ -89,7 +89,7 @@ pub fn start(shared: Arc<Shared>) -> Result<(SckStream, u32, u16), String> {
         .map_err(|e| e.to_string())?
         .set_sample_rate(SAMPLE_RATE)
         .map_err(|e| e.to_string())?
-        .set_channel_count(CHANNELS as u32)
+        .set_channel_count(CHANNELS as u8)
         .map_err(|e| e.to_string())?
         .set_excludes_current_process_audio(true)
         .map_err(|e| e.to_string())?
