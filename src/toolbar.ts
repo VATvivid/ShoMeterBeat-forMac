@@ -6,12 +6,12 @@ import type { Frame } from "./engine/frame";
 import { inTauri, type Source } from "./engine/source";
 import type { Grid } from "./layout/grid";
 import { applyDock, installDockGrip, releaseDockReservation } from "./dock";
-import { installFrameless, setFrameless } from "./frameless";
+import { applyFrame, installFrameless, setFrameless } from "./frameless";
 import { buildModulesPanel, closeAllMenus, wireMenu } from "./modulespanel";
-import { applyPresetState, capturePreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
+import { applyPresetState, captureFullPreset, deletePreset, loadPresets, presetFromJson, presetToJson, storePreset, type Preset } from "./presets";
 import { layoutKindFor, onSettingsSynced, resetLayout, saveSettings, settings, type DockMode } from "./state";
 import { notice, noticeHeld } from "./status";
-import { applyOpacity, closePop, createPop, flashAll, loadPops, popTitle, restorePops, setAlwaysOnTop } from "./windows";
+import { applyOpacity, applyPops, applyWindowBounds, closePop, createPop, flashAll, loadPops, popTitle, restorePops, setAlwaysOnTop } from "./windows";
 import { miniState, restoreMini, toggleMini } from "./mini";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -159,9 +159,19 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
   // ---- presets (layout + settings + dock) -----------------------------------------
   const presetPanel = $("preset-panel");
   async function applyPreset(name: string, p: Preset) {
-    applyPresetState(p);
-    await setDock(p.dock);          // switches layout kind if needed
+    applyPresetState(p);            // writes layouts + all settings (incl opacity / frame / on-top)
+    await setDock(p.dock);          // switches layout kind if needed, applies docked geometry
     grid.sync();                    // same kind: re-place tiles with the new rects
+    // push the window-level settings to the actual window (dock mode handles its own frame/on-top/geometry)
+    await applyFrame().catch(() => {});
+    applyOpacity(settings.opacity);
+    if (settings.dock === "none") {
+      await setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
+      await applyWindowBounds(p.win).catch(() => {});
+    }
+    // only manage pop-outs when the preset carries them (older presets have no `pops` field —
+    // leave the current windows alone instead of closing them all)
+    if (p.pops) await applyPops(p.pops).catch((e) => console.error(e));
     await populateDevices().catch(() => {});
     notice(`프리셋 적용: ${name}`, "ok", 3000);
     buildPresetPanel();
@@ -185,7 +195,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       apply.addEventListener("click", () => { closeAllMenus(); applyPreset(name, p); });
       const over = document.createElement("button");
       over.className = "btn icon"; over.title = "현재 상태로 덮어쓰기"; over.textContent = "↻";
-      over.addEventListener("click", () => { storePreset(name); buildPresetPanel(); });
+      over.addEventListener("click", async () => { storePreset(name, await captureFullPreset()); buildPresetPanel(); });
       const del = document.createElement("button");
       del.className = "btn icon"; del.title = "삭제"; del.textContent = "×";
       del.addEventListener("click", () => { deletePreset(name); buildPresetPanel(); });
@@ -200,7 +210,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") saveBtn.click(); });
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn on"; saveBtn.textContent = "현재 상태 저장";
-    saveBtn.addEventListener("click", () => { const n = input.value.trim(); if (!n) { input.focus(); return; } storePreset(n); buildPresetPanel(); });
+    saveBtn.addEventListener("click", async () => { const n = input.value.trim(); if (!n) { input.focus(); return; } storePreset(n, await captureFullPreset()); buildPresetPanel(); });
     saveRow.append(input, saveBtn);
     presetPanel.appendChild(saveRow);
     if (inTauri) {
@@ -210,7 +220,7 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       exp.addEventListener("click", async () => {
         const n = input.value.trim() || "preset";
         const dst = await saveDialog({ title: "프리셋 내보내기", defaultPath: `${n}.rmpreset.json`, filters: [{ name: "JSON", extensions: ["json"] }] });
-        if (dst) await source.writeText(dst, presetToJson(n, capturePreset()));
+        if (dst) await source.writeText(dst, presetToJson(n, await captureFullPreset()));
       });
       const imp = document.createElement("button"); imp.className = "btn"; imp.textContent = "가져오기…";
       imp.addEventListener("click", async () => {

@@ -102,6 +102,62 @@ export async function restorePops() {
   }
 }
 
+// ---- preset support: capture / restore the whole pop-out set + the main window's rect ----------
+export interface PopSnapshot { entry: PopWin; layout: Layout }
+export interface WinBounds { x: number; y: number; w: number; h: number }
+
+/** Every open pop-out as (geometry + the module layout it shows), for saving into a preset. */
+export function capturePops(): PopSnapshot[] {
+  return loadPops().map((e) => {
+    let layout: Layout = {};
+    try { layout = JSON.parse(localStorage.getItem(popLayoutKey(e.label)) || "{}") as Layout; } catch { /* ignore */ }
+    return { entry: { ...e }, layout };
+  });
+}
+
+/** Destroys every pop-out window and clears the list + their layout keys (no merge into a grid). */
+export async function closeAllPops() {
+  if (!inTauri) return;
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  for (const e of loadPops()) {
+    const w = await WebviewWindow.getByLabel(e.label);
+    await w?.destroy().catch(() => {});
+    try { localStorage.removeItem(popLayoutKey(e.label)); } catch { /* ignore */ }
+  }
+  savePops([]);
+}
+
+/** Replaces the current pop-outs with a preset's set (fresh labels, same geometry + modules). */
+export async function applyPops(snaps: PopSnapshot[]) {
+  if (!inTauri) return;
+  await closeAllPops();
+  const list: PopWin[] = [];
+  snaps.forEach((s, i) => {
+    const label = `pop-${Date.now().toString(36)}${i}${Math.floor(Math.random() * 1e3)}`;
+    try { localStorage.setItem(popLayoutKey(label), JSON.stringify(s.layout)); } catch { /* ignore */ }
+    list.push({ ...s.entry, label });
+  });
+  savePops(list);
+  for (const e of list) await openPopWindow(e).catch((err) => console.error(err));
+}
+
+/** This (main) window's outer rect in physical px, for saving into a preset. */
+export async function captureWindowBounds(): Promise<WinBounds | null> {
+  if (!inTauri || IS_POP) return null;
+  try {
+    const { w } = await tauriWindow();
+    const p = await w.outerPosition();
+    const s = await w.outerSize();
+    return { x: p.x, y: p.y, w: s.width, h: s.height };
+  } catch { return null; }
+}
+
+/** Moves/sizes the main window to a saved rect (physical px). Caller gates this on dock === "none". */
+export async function applyWindowBounds(b: WinBounds | null | undefined) {
+  if (!inTauri || IS_POP || !b) return;
+  await invoke("set_window_rect", { x: b.x, y: b.y, w: b.w, h: b.h }).catch((e) => console.error(e));
+}
+
 /** Closes a pop-out and brings its modules back into this (main) grid, appended. */
 export async function closePop(label: string, grid: Grid) {
   for (const m of popModules(label)) grid.add(m.id, m.w, m.h);
