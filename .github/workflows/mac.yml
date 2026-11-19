@@ -11,6 +11,22 @@ jobs:
     # the included compute on a personal (non-enterprise) GitHub account. (On an enterprise-managed
     # account macOS runners are policy-gated and this job just queues; run it from a personal account.)
     runs-on: macos-latest
+    name: build (${{ matrix.variant }})
+    # Two variants: the known-good baseline, and the experimental ScreenCaptureKit system-audio build.
+    # The experimental one may fail without turning the workflow red (its errors are still surfaced).
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: baseline
+            features: ""
+            suffix: ""
+            experimental: false
+          - variant: syscapture
+            features: "--features mac-syscapture"
+            suffix: "-syscapture"
+            experimental: true
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +91,7 @@ jobs:
       - name: Build macOS app (.dmg)
         run: |
           set -o pipefail
-          npx tauri build --config src-tauri/tauri.macos.conf.json 2>&1 | tee build.log
+          npx tauri build --config src-tauri/tauri.macos.conf.json ${{ matrix.features }} 2>&1 | tee build.log
 
       # The step log needs auth to read; on failure replay the cause as annotations (visible via the API).
       - name: Surface build errors
@@ -113,7 +129,7 @@ jobs:
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-arm64-dmg
+          name: ShowMeterBeat-macos-arm64-dmg${{ matrix.suffix }}
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
@@ -121,6 +137,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-arm64-app
+          name: ShowMeterBeat-macos-arm64-app${{ matrix.suffix }}
           path: src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: warn

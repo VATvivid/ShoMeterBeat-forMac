@@ -9,6 +9,8 @@
 
 pub mod analyzer;
 pub mod capture;
+#[cfg(all(target_os = "macos", feature = "mac-syscapture"))]
+pub mod capture_sck;
 pub mod frame;
 pub mod loudness;
 pub mod punch;

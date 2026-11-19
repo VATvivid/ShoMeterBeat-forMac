@@ -46,6 +46,11 @@ ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dyn
 # `std` gives SessionBuilder::commit_from_file (file-based model loading); on Windows `load-dynamic` implies it.
 ort = { version = "2.0.0-rc.15", default-features = false, features = ["download-binaries", "tls-native", "std"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# System-audio capture (the Windows WASAPI-loopback equivalent) via ScreenCaptureKit — see audio/capture_sck.rs.
+# Optional behind `mac-syscapture` so the baseline macOS build stays green while this is iterated in CI.
+screencapturekit = { version = "0.3", optional = true }
+
 [features]
 # Live subtitles (whisper.cpp) ship by default (2026-11-19 사용자: 빌드에 자막 포함).
 # Building therefore needs CMake + LLVM/libclang on the build machine:
@@ -53,6 +58,8 @@ ort = { version = "2.0.0-rc.15", default-features = false, features = ["download
 # To build without the whisper toolchain: `npm run tauri build -- --no-default-features`.
 default = ["subtitles"]
 subtitles = ["dep:whisper-rs"]
+# macOS: capture the system mix through ScreenCaptureKit (needs Screen Recording permission).
+mac-syscapture = ["dep:screencapturekit"]
 
 [profile.release]
 opt-level = 3

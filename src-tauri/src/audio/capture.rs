@@ -25,8 +25,17 @@ pub struct DeviceEntry {
     pub default: bool,
 }
 
+/// The live stream behind a `Capture` — cpal everywhere; ScreenCaptureKit for the system mix on macOS.
+/// The payloads are only held (dropping them stops the capture), never read.
+#[allow(dead_code)]
+enum StreamHandle {
+    Cpal(cpal::Stream),
+    #[cfg(all(target_os = "macos", feature = "mac-syscapture"))]
+    Sck(super::capture_sck::SckStream),
+}
+
 pub struct Capture {
-    _stream: cpal::Stream,
+    _stream: StreamHandle,
     pub name: String,
     pub kind: Kind,
     pub sample_rate: u32,
@@ -85,6 +94,12 @@ fn find_device(host: &cpal::Host, name: Option<&str>, kind: Kind) -> Result<cpal
 }
 
 pub fn start(name: Option<&str>, kind: Kind, shared: Arc<Shared>) -> Result<Capture, String> {
+    // macOS has no output loopback device: "output" / "auto" capture the system mix via ScreenCaptureKit.
+    #[cfg(all(target_os = "macos", feature = "mac-syscapture"))]
+    if kind == Kind::Output {
+        let (stream, sample_rate, channels) = super::capture_sck::start(shared)?;
+        return Ok(Capture { _stream: StreamHandle::Sck(stream), name: "시스템 소리 (ScreenCaptureKit)".into(), kind, sample_rate, channels });
+    }
     let host = cpal::default_host();
     let device = find_device(&host, name, kind)?;
     let dev_name = device.name().unwrap_or_else(|_| "?".into());
@@ -107,7 +122,7 @@ pub fn start(name: Option<&str>, kind: Kind, shared: Arc<Shared>) -> Result<Capt
     .map_err(|e| explain(e, kind))?;
     stream.play().map_err(|e| explain(e, kind))?;
 
-    Ok(Capture { _stream: stream, name: dev_name, kind, sample_rate, channels })
+    Ok(Capture { _stream: StreamHandle::Cpal(stream), name: dev_name, kind, sample_rate, channels })
 }
 
 /// Turn backend errors into something a user can act on.
