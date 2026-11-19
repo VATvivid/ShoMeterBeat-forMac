@@ -40,7 +40,8 @@ ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dyn
 # ONNX Runtime on macOS/Linux: the ort crate's own prebuilt binaries (pyke), fetched at build time for the
 # exact ORT build it expects (our "1.31.1" is a pyke dev build — it exists on neither GitHub releases nor
 # PyPI, so a hand-downloaded dylib can never match). Linked into the app: no runtime library to bundle.
-ort = { version = "2.0.0-rc.15", default-features = false, features = ["download-binaries", "ndarray"] }
+# `download-binaries` needs exactly one TLS backend for its fetcher; `tls-native` = the OS TLS (Security.framework).
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["download-binaries", "tls-native", "ndarray"] }
 
 [features]
 # Live subtitles (whisper.cpp) ship by default (2026-11-19 사용자: 빌드에 자막 포함).
