@@ -50,8 +50,22 @@ fn plugin_source_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 #[tauri::command]
 fn install_plugins(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let src = plugin_source_dir(&app).ok_or("번들된 플러그인 파일을 찾을 수 없습니다 (plugins/ 폴더)")?;
-    let local = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 없음")?;
-    install_plugins_from(&src, &std::path::Path::new(&local).join("Programs").join("Common"))
+    install_plugins_from(&src, &plugin_common_dir()?)
+}
+
+/// Per-user plugin root that holds the `CLAP` and `VST3` subfolders.
+/// Windows: `%LOCALAPPDATA%\Programs\Common`. macOS: `~/Library/Audio/Plug-Ins`.
+fn plugin_common_dir() -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").map_err(|_| "HOME 없음")?;
+        Ok(std::path::Path::new(&home).join("Library").join("Audio").join("Plug-Ins"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let local = std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA 없음")?;
+        Ok(std::path::Path::new(&local).join("Programs").join("Common"))
+    }
 }
 
 /// True when `dst` already holds exactly the bytes of `src` (so a locked, identical plugin

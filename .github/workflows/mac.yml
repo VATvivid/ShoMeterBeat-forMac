@@ -1,0 +1,52 @@
+name: macOS build
+
+on:
+  push:
+    branches: [mac-port]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14 # Apple Silicon (arm64) — matches onnxruntime-osx-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # whisper.cpp needs cmake (preinstalled on macOS runners) + libclang (from Xcode's clang).
+      - name: Toolchain versions
+        run: |
+          cmake --version
+          clang --version
+
+      # ONNX Runtime dylib (host OS) + whisper base/small + yamnet/nmp into src-tauri/models/
+      - name: Fetch models
+        run: |
+          python3 -I -X utf8 scripts/fetch_models.py --whisper base
+          python3 -I -X utf8 scripts/fetch_models.py --whisper small
+          ls -la src-tauri/models
+
+      - name: Install JS deps
+        run: npm install
+
+      - name: Build macOS app (.dmg)
+        run: npx tauri build --config src-tauri/tauri.macos.conf.json
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowMeterBeat-macos-arm64-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload .app (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowMeterBeat-macos-arm64-app
+          path: src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: warn

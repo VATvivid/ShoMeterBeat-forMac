@@ -6,6 +6,10 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 *.exe
+# packaged installers / bundles kept at the repo root for distribution, never committed
+*.zip
+*.dmg
+*.app
 src-tauri/plugins/
 crates/*/target/
 src-tauri/models/

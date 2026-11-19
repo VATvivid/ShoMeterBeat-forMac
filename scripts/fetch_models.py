@@ -7,7 +7,7 @@ Licences: YAMNet Apache-2.0 (Google), Basic Pitch Apache-2.0 (Spotify), ONNX Run
 (ggerganov / OpenAI). See THIRD_PARTY_NOTICES.md. `--ssl-no-revoke` works around corporate
 TLS inspection breaking schannel revocation checks on CDN hosts.
 """
-import os, subprocess, sys, tempfile, zipfile
+import os, subprocess, sys, tempfile, zipfile, tarfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DST = os.path.join(ROOT, "src-tauri", "models")
@@ -20,7 +20,10 @@ FILES = {
     "nmp.onnx": "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx",
     "BASIC_PITCH_LICENSE": "https://raw.githubusercontent.com/spotify/basic-pitch/main/LICENSE",
 }
-ORT_URL = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1/onnxruntime-win-x64-1.31.1.zip"
+ORT_VER = "1.31.1"
+ORT_WIN = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-win-x64-{ORT_VER}.zip"
+# macOS Apple Silicon build; its lib/ holds libonnxruntime.<ver>.dylib (what ort load-dynamic needs).
+ORT_MAC = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-arm64-{ORT_VER}.tgz"
 
 
 def fetch(url, out):
@@ -38,10 +41,27 @@ for name, url in FILES.items():
     print("downloading", name)
     fetch(url, out)
 
-if not os.path.exists(os.path.join(DST, "onnxruntime.dll")):
-    print("downloading ONNX Runtime")
+# ONNX Runtime shared library — the build downloads the one for the host OS.
+if sys.platform == "darwin":
+    if not os.path.exists(os.path.join(DST, "libonnxruntime.dylib")):
+        print("downloading ONNX Runtime (macOS arm64)")
+        tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-osx-arm64.tgz")
+        fetch(ORT_MAC, tmp)
+        with tarfile.open(tmp) as t:
+            for m in t.getmembers():
+                base = os.path.basename(m.name)
+                # the real versioned dylib (not the symlink) → models/libonnxruntime.dylib
+                if m.isfile() and base.startswith("libonnxruntime.") and base.endswith(".dylib"):
+                    with t.extractfile(m) as f:
+                        open(os.path.join(DST, "libonnxruntime.dylib"), "wb").write(f.read())
+                elif base == "LICENSE" and not os.path.exists(os.path.join(DST, "ORT_LICENSE")):
+                    with t.extractfile(m) as f:
+                        open(os.path.join(DST, "ORT_LICENSE"), "wb").write(f.read())
+        os.remove(tmp)
+elif not os.path.exists(os.path.join(DST, "onnxruntime.dll")):
+    print("downloading ONNX Runtime (Windows x64)")
     tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-win-x64.zip")
-    fetch(ORT_URL, tmp)
+    fetch(ORT_WIN, tmp)
     with zipfile.ZipFile(tmp) as z:
         for n in z.namelist():
             base = os.path.basename(n)
