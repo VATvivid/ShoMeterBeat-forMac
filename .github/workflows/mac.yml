@@ -48,6 +48,13 @@ jobs:
             for v in GGML_AVX GGML_AVX2 GGML_FMA GGML_F16C GGML_SSE42 GGML_BMI2; do echo "$v=OFF"; done
             echo "GGML_NATIVE=OFF"
           } >> "$GITHUB_ENV"
+          # ort's prebuilt ONNX Runtime (CoreML EP) uses @available → needs clang's compiler-rt builtins
+          # (___isPlatformVersionAtLeast) which Rust's link step doesn't add by itself; link libclang_rt.osx.
+          # Deployment target 14.0: the ORT objects are built for ≥13.4 and the target Macs run 14+.
+          RT="$(clang -print-resource-dir)/lib/darwin"
+          ls "$RT"/libclang_rt.osx.a
+          echo "RUSTFLAGS=-C link-arg=-L$RT -C link-arg=-lclang_rt.osx" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
 
       # whisper base/small + yamnet/nmp into src-tauri/models/ (ONNX Runtime itself comes from the ort crate)
       - name: Fetch models

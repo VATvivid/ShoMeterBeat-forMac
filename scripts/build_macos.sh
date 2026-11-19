@@ -53,6 +53,14 @@ export CMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" CMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBU
 export CMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG" CMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG"
 export GGML_AVX=OFF GGML_AVX2=OFF GGML_FMA=OFF GGML_F16C=OFF GGML_SSE42=OFF GGML_BMI2=OFF GGML_NATIVE=OFF
 
+# --- link clang's compiler-rt builtins ------------------------------------------------
+# ort's prebuilt ONNX Runtime (CoreML EP) references ___isPlatformVersionAtLeast from libclang_rt.osx,
+# which Rust's link step doesn't add on its own. Deployment target 14.0 matches the ORT objects (≥13.4).
+RT="$(clang -print-resource-dir)/lib/darwin"
+[ -f "$RT/libclang_rt.osx.a" ] || { echo "!! libclang_rt.osx.a not found under $RT"; exit 1; }
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-L$RT -C link-arg=-lclang_rt.osx"
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
+
 # --- models (onnxruntime dylib for this arch + whisper base/small + yamnet/nmp) --
 echo "==> Fetching AI models into src-tauri/models (one-time, a few hundred MB)"
 python3 -I -X utf8 scripts/fetch_models.py --whisper base
