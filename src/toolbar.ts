@@ -169,7 +169,9 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       await setAlwaysOnTop(settings.alwaysOnTop).catch(() => {});
       await applyWindowBounds(p.win).catch(() => {});
     }
-    await applyPops(p.pops ?? []).catch((e) => console.error(e));
+    // only manage pop-outs when the preset carries them (older presets have no `pops` field —
+    // leave the current windows alone instead of closing them all)
+    if (p.pops) await applyPops(p.pops).catch((e) => console.error(e));
     await populateDevices().catch(() => {});
     notice(`프리셋 적용: ${name}`, "ok", 3000);
     buildPresetPanel();
