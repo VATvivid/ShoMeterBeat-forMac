@@ -56,9 +56,10 @@ screencapturekit = { version = "0.3", optional = true }
 # Building therefore needs CMake + LLVM/libclang on the build machine:
 #   set LIBCLANG_PATH=C:\Program Files\LLVM\bin  and put cmake on PATH, then `npm run tauri build`.
 # To build without the whisper toolchain: `npm run tauri build -- --no-default-features`.
-default = ["subtitles"]
+default = ["subtitles", "mac-syscapture"]
 subtitles = ["dep:whisper-rs"]
 # macOS: capture the system mix through ScreenCaptureKit (needs Screen Recording permission).
+# The dependency only exists for target_os = "macos", so this feature is a no-op elsewhere.
 mac-syscapture = ["dep:screencapturekit"]
 
 [profile.release]
