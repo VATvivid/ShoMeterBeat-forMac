@@ -11,7 +11,12 @@ import os, subprocess, sys, tempfile, zipfile, tarfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DST = os.path.join(ROOT, "src-tauri", "models")
-CURL = ["curl", "-L", "--ssl-no-revoke", "--retry", "3", "-A", "ShowMeterBeat"]
+# -f: fail on HTTP errors — without it a 404 page is saved as the "model" and passes the size check.
+CURL = ["curl", "-fL", "--retry", "3", "-A", "ShowMeterBeat"]
+# `--ssl-no-revoke` exists only in Windows' schannel curl (works around corporate TLS inspection);
+# macOS/Linux curl rejects it as an unknown option, which aborted every download in CI.
+if sys.platform == "win32":
+    CURL.insert(2, "--ssl-no-revoke")
 
 FILES = {
     "yamnet.onnx": "https://huggingface.co/zeropointnine/yamnet-onnx/resolve/main/yamnet.onnx",
@@ -29,10 +34,28 @@ _ORT_MAC_ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") el
 ORT_MAC = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-{_ORT_MAC_ARCH}-{ORT_VER}.tgz"
 
 
+def _ok(out):
+    return os.path.exists(out) and os.path.getsize(out) > 1000
+
+
 def fetch(url, out):
     r = subprocess.run(CURL + ["-o", out, url])
-    if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) < 1000:
+    if r.returncode != 0 or not _ok(out):
+        # "::error::" lines become GitHub Actions annotations, so the cause is visible without the log.
+        print(f"::error::download failed: {url} (curl exit {r.returncode})")
         sys.exit(f"download failed: {url}")
+
+
+def fetch_first(urls, out):
+    """Try each URL in order (release assets differ by version); keep the first that downloads."""
+    for u in urls:
+        r = subprocess.run(CURL + ["-o", out, u])
+        if r.returncode == 0 and _ok(out):
+            return u
+        if os.path.exists(out):
+            os.remove(out)
+    print(f"::error::download failed, tried: {' | '.join(urls)}")
+    sys.exit("download failed")
 
 
 os.makedirs(DST, exist_ok=True)
@@ -47,9 +70,11 @@ for name, url in FILES.items():
 # ONNX Runtime shared library — the build downloads the one for the host OS.
 if sys.platform == "darwin":
     if not os.path.exists(os.path.join(DST, "libonnxruntime.dylib")):
-        print("downloading ONNX Runtime (macOS arm64)")
-        tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-osx-arm64.tgz")
-        fetch(ORT_MAC, tmp)
+        print(f"downloading ONNX Runtime (macOS {_ORT_MAC_ARCH})")
+        tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-osx.tgz")
+        # arch-specific first; the universal2 build is the fallback if that asset name is absent
+        ort_u2 = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-universal2-{ORT_VER}.tgz"
+        print("  using", fetch_first([ORT_MAC, ort_u2], tmp))
         with tarfile.open(tmp) as t:
             for m in t.getmembers():
                 base = os.path.basename(m.name)
