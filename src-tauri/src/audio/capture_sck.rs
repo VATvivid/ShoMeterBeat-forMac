@@ -42,7 +42,8 @@ impl SCStreamOutputTrait for AudioOut {
             return;
         }
         let Ok(list) = sample.get_audio_buffer_list() else { return };
-        let bufs: Vec<_> = list.iter().collect();
+        // RetainedAudioBufferList derefs to AudioBufferList: buffers() -> &[AudioBuffer] (no iter()).
+        let bufs = list.buffers();
         let as_f32 = |bytes: &[u8]| -> Vec<f32> {
             bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
         };
