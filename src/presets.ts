@@ -1,6 +1,7 @@
 // Named presets: dock mode + all three layouts + settings (source, targets, per-module
 // settings). Applying a preset switches dock mode, layout and settings in one go.
 import { layouts, saveLayout, saveSettings, settings, type DockMode, type Layout, type LayoutKind, type Settings } from "./state";
+import { capturePops, captureWindowBounds, type PopSnapshot, type WinBounds } from "./windows";
 
 export interface Preset {
   dock: DockMode;
@@ -8,6 +9,10 @@ export interface Preset {
   layouts: Record<LayoutKind, Layout>;
   settings: Omit<Settings, "dock" | "dockSize">;
   savedAt: string;
+  /** Pop-out windows (each one's geometry + the modules it shows) — restored as windows on apply. */
+  pops?: PopSnapshot[];
+  /** Main window outer rect in physical px; applied only when the preset's dock is "none". */
+  win?: WinBounds | null;
 }
 
 const KEY = "rm.presets.v1";
@@ -21,10 +26,19 @@ export function savePresets(p: Record<string, Preset>) {
   try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ }
 }
 
-/** Snapshot of the current state. */
+/** Snapshot of the current state (layouts + settings + dock). Does not include the pop-out windows
+ *  or the main window geometry — those need async reads; use `captureFullPreset` for a complete one. */
 export function capturePreset(): Preset {
   const { dock, dockSize, ...rest } = settings;
   return { dock, dockSize, layouts: clone(layouts), settings: clone(rest), savedAt: new Date().toISOString() };
+}
+
+/** Complete snapshot: `capturePreset` plus the open pop-out windows and the main window's rect. */
+export async function captureFullPreset(): Promise<Preset> {
+  const p = capturePreset();
+  p.pops = capturePops();
+  p.win = await captureWindowBounds();
+  return p;
 }
 
 export function storePreset(name: string, p: Preset = capturePreset()) {
@@ -48,12 +62,11 @@ export function applyPresetState(p: Preset) {
     Object.assign(l, clone(p.layouts[kind] ?? {}));
     saveLayout(kind);
   }
+  // Restore every saved setting (opacity / 투명 방식 / 항상 위 / 테두리 없음 / 모듈별 설정 등) — the
+  // caller then pushes the window-level ones (opacity, frame, on-top, geometry) to the actual window.
   const s = clone(p.settings);
-  settings.sourceMode = s.sourceMode;
-  settings.device = s.device;
-  settings.loudnessTarget = s.loudnessTarget;
-  settings.levelMode = s.levelMode;
-  settings.modules = s.modules ?? {};
+  Object.assign(settings, s);
+  if (!settings.modules || typeof settings.modules !== "object") settings.modules = {};
   settings.dockSize = p.dockSize;
   settings.dock = p.dock;
   saveSettings();
