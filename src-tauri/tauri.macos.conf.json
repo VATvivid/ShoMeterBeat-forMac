@@ -6,6 +6,7 @@
       "minimumSystemVersion": "13.0"
     },
     "resources": [
+      "plugins/**/*",
       "models/yamnet.onnx",
       "models/yamnet_class_map.csv",
       "models/nmp.onnx",

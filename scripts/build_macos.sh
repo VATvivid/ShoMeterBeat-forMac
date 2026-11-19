@@ -39,6 +39,10 @@ python3 -I -X utf8 scripts/fetch_models.py --whisper base
 python3 -I -X utf8 scripts/fetch_models.py --whisper small
 
 # --- frontend deps --------------------------------------------------------------
+# --- DAW Send plugin (macOS .clap + .vst3 bundles) ------------------------------
+echo "==> Building the ShowMeterBeat Send plugin (CLAP + VST3)"
+python3 -I -X utf8 scripts/bundle_plugin_macos.py || echo "   (plugin build failed — the app still builds; DAW Send will be unavailable)"
+
 echo "==> npm install"
 npm install
 
@@ -46,14 +50,21 @@ npm install
 echo "==> tauri build (first run compiles whisper.cpp — this takes a while)"
 npx tauri build --config src-tauri/tauri.macos.conf.json
 
+# --- ad-hoc sign so an unsigned build opens more reliably (no Apple account needed) --
+APP="src-tauri/target/release/bundle/macos/ShowMeterBeat.app"
+if [ -d "$APP" ]; then
+  echo "==> Ad-hoc signing $APP"
+  codesign --force --deep -s - "$APP" 2>/dev/null || echo "   (codesign skipped)"
+fi
+
 echo
 echo "==> Build complete. Artifacts:"
 ls -la  src-tauri/target/release/bundle/dmg/*.dmg   2>/dev/null || echo "   (no .dmg — check the log above)"
 ls -ld  src-tauri/target/release/bundle/macos/*.app 2>/dev/null || true
 echo
-echo "This build is unsigned, so Gatekeeper will warn on first open. To run it:"
-echo "   • right-click the app → Open → Open,  OR"
-echo "   • xattr -dr com.apple.quarantine 'src-tauri/target/release/bundle/macos/ShowMeterBeat.app'"
+echo "Install: open the .dmg and drag ShowMeterBeat into Applications."
+echo "First launch (unsigned): right-click the app → Open → Open."
+echo "If it still won't open:  xattr -dr com.apple.quarantine '/Applications/ShowMeterBeat.app'"
 echo
-echo "Note (first macOS build): docking and system-audio loopback are not available yet;"
-echo "use an input device or a virtual audio device (e.g. BlackHole) as the capture source."
+echo "Note: system-audio loopback is coming next (ScreenCaptureKit); for now pick an input"
+echo "device or a virtual audio device (e.g. BlackHole) as the capture source."

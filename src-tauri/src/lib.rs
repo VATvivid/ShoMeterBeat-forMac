@@ -122,8 +122,11 @@ fn install_plugins_from(src: &std::path::Path, common: &std::path::Path) -> Resu
     if old_clap.exists() { let _ = std::fs::remove_file(&old_clap); }
     let old_vst = common.join("VST3").join(format!("{OLD_PLUGIN_NAME}.vst3"));
     if old_vst.exists() { let _ = std::fs::remove_dir_all(&old_vst); }
+    let clap_src = src.join(format!("{PLUGIN_NAME}.clap"));
     let clap_dst = common.join("CLAP").join(format!("{PLUGIN_NAME}.clap"));
-    copy_plugin_file(&src.join(format!("{PLUGIN_NAME}.clap")), &clap_dst, &mut warnings)?;
+    // CLAP is a single file on Windows, a bundle directory on macOS.
+    if clap_src.is_dir() { copy_plugin_dir(&clap_src, &clap_dst, &mut warnings)?; }
+    else { copy_plugin_file(&clap_src, &clap_dst, &mut warnings)?; }
     done.push(clap_dst.display().to_string());
     let vst_src = src.join(format!("{PLUGIN_NAME}.vst3"));
     if vst_src.exists() {
@@ -515,7 +518,9 @@ fn set_window_rect(window: tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Res
     }
     #[cfg(not(windows))]
     {
-        let _ = (window, x, y, w, h);
+        // macOS/Linux: no atomic SetWindowPos — Tauri moves + resizes (best-effort).
+        window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+        window.set_size(tauri::PhysicalSize::new(w.max(1) as u32, h.max(1) as u32)).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -579,7 +584,10 @@ fn dock_pin(window: tauri::Window, x: i32, y: i32, w: i32, h: i32) -> Result<(),
     }
     #[cfg(not(windows))]
     {
-        let _ = (window, x, y, w, h);
+        // macOS/Linux: no screen-edge reservation (AppBar is Windows-only), so docking is
+        // best-effort — pin the window to the edge rect. It won't push other windows aside.
+        window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+        window.set_size(tauri::PhysicalSize::new(w.max(1) as u32, h.max(1) as u32)).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
