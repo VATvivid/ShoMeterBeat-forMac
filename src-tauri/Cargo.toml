@@ -19,7 +19,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-drag = "2"
 raw-window-handle = "0.6"
 hound = "3"
-ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "ndarray"] }
 whisper-rs = { version = "0.16", optional = true }
 symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "aiff", "flac", "mp3", "ogg", "vorbis", "isomp4", "aac"] }
 rm-shm = { path = "../crates/rm-shm" }
@@ -34,6 +33,14 @@ env_logger = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
+# ONNX Runtime on Windows: loaded at run time from models/onnxruntime.dll (shipped as a resource).
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "ndarray"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# ONNX Runtime on macOS/Linux: the ort crate's own prebuilt binaries (pyke), fetched at build time for the
+# exact ORT build it expects (our "1.31.1" is a pyke dev build — it exists on neither GitHub releases nor
+# PyPI, so a hand-downloaded dylib can never match). Linked into the app: no runtime library to bundle.
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["download-binaries", "ndarray"] }
 
 [features]
 # Live subtitles (whisper.cpp) ship by default (2026-11-19 사용자: 빌드에 자막 포함).

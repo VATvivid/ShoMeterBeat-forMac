@@ -102,33 +102,10 @@ for name, url in FILES.items():
 
 # ONNX Runtime shared library — the build downloads the one for the host OS.
 if sys.platform == "darwin":
-    dylib_dst = os.path.join(DST, "libonnxruntime.dylib")
-    if not os.path.exists(dylib_dst):
-        print(f"downloading ONNX Runtime (macOS {_ORT_MAC_ARCH})")
-        tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-osx.tgz")
-        # GitHub release tgz first (arch-specific, then universal2); asset names vary by version and
-        # 1.31.1 had neither (both 404 in CI), so the PyPI wheel is the reliable fallback.
-        ort_u2 = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-universal2-{ORT_VER}.tgz"
-        got = try_fetch([ORT_MAC, ort_u2], tmp)
-        if got:
-            print("  using", got)
-            with tarfile.open(tmp) as t:
-                for m in t.getmembers():
-                    base = os.path.basename(m.name)
-                    # the real versioned dylib (not the symlink) → models/libonnxruntime.dylib
-                    if m.isfile() and base.startswith("libonnxruntime.") and base.endswith(".dylib"):
-                        with t.extractfile(m) as f:
-                            open(dylib_dst, "wb").write(f.read())
-                    elif base == "LICENSE" and not os.path.exists(os.path.join(DST, "ORT_LICENSE")):
-                        with t.extractfile(m) as f:
-                            open(os.path.join(DST, "ORT_LICENSE"), "wb").write(f.read())
-            os.remove(tmp)
-        else:
-            print("  GitHub release asset not found — falling back to the PyPI wheel")
-            ort_dylib_from_wheel(ORT_VER, dylib_dst)
-        if not _ok(dylib_dst):
-            print("::error::libonnxruntime.dylib was not produced")
-            sys.exit("onnxruntime missing")
+    # macOS: nothing to download — the ort crate fetches and links its own prebuilt ONNX Runtime at
+    # build time (Cargo.toml: ort `download-binaries`). The "1.31.1" the Windows dll reports is a pyke
+    # dev build that exists on neither GitHub releases nor PyPI, so a hand-downloaded dylib can't match.
+    print("ONNX Runtime (macOS): provided by the ort crate at build time — skipping download")
 elif not os.path.exists(os.path.join(DST, "onnxruntime.dll")):
     print("downloading ONNX Runtime (Windows x64)")
     tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-win-x64.zip")

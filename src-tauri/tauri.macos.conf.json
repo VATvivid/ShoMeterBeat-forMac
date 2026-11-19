@@ -12,8 +12,6 @@
       "models/nmp.onnx",
       "models/BASIC_PITCH_LICENSE",
       "models/KONG_LICENSE",
-      "models/libonnxruntime.dylib",
-      "models/ORT_LICENSE",
       "models/ggml-base.bin",
       "models/ggml-small.bin"
     ]
