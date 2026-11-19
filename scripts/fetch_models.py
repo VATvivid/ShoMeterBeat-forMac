@@ -20,10 +20,13 @@ FILES = {
     "nmp.onnx": "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx",
     "BASIC_PITCH_LICENSE": "https://raw.githubusercontent.com/spotify/basic-pitch/main/LICENSE",
 }
+import platform
+
 ORT_VER = "1.31.1"
 ORT_WIN = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-win-x64-{ORT_VER}.zip"
-# macOS Apple Silicon build; its lib/ holds libonnxruntime.<ver>.dylib (what ort load-dynamic needs).
-ORT_MAC = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-arm64-{ORT_VER}.tgz"
+# macOS build matched to the host arch; its lib/ holds libonnxruntime.<ver>.dylib (ort load-dynamic).
+_ORT_MAC_ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
+ORT_MAC = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-{_ORT_MAC_ARCH}-{ORT_VER}.tgz"
 
 
 def fetch(url, out):

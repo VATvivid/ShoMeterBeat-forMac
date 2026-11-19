@@ -7,7 +7,8 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14 # Apple Silicon (arm64) — matches onnxruntime-osx-arm64
+    # macos-14/15 (arm64) map to an xlarge SKU this account can't use; macos-13 is the standard Intel runner.
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
@@ -39,7 +40,7 @@ jobs:
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-arm64-dmg
+          name: ShowMeterBeat-macos-x64-dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
@@ -47,6 +48,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-arm64-app
+          name: ShowMeterBeat-macos-x64-app
           path: src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: warn
