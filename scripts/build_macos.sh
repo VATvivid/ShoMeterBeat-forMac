@@ -45,6 +45,14 @@ fi
 export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--isysroot $(xcrun --show-sdk-path)}"
 echo "    libclang $LIBCLANG_PATH"
 
+# --- override the Windows-only [env] in src-tauri/.cargo/config.toml -----------------
+# (VS cmake.exe path, MSVC /O2 /arch:AVX2 flags, x86 GGML_AVX* switches). Cargo [env] never overrides
+# variables that are already set, so export the macOS equivalents before cargo runs.
+export CMAKE="$(command -v cmake)"
+export CMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG" CMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG"
+export CMAKE_C_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG" CMAKE_CXX_FLAGS_RELWITHDEBINFO="-O3 -DNDEBUG"
+export GGML_AVX=OFF GGML_AVX2=OFF GGML_FMA=OFF GGML_F16C=OFF GGML_SSE42=OFF GGML_BMI2=OFF GGML_NATIVE=OFF
+
 # --- models (onnxruntime dylib for this arch + whisper base/small + yamnet/nmp) --
 echo "==> Fetching AI models into src-tauri/models (one-time, a few hundred MB)"
 python3 -I -X utf8 scripts/fetch_models.py --whisper base

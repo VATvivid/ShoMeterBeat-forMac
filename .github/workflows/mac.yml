@@ -36,6 +36,18 @@ jobs:
           done
           if [ -z "${FOUND:-}" ]; then brew install llvm; echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"; fi
           echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot $(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+          # src-tauri/.cargo/config.toml carries Windows-only [env] values (VS cmake.exe path, MSVC /O2 /arch:AVX2
+          # flags, x86 GGML_AVX* switches). Cargo [env] never overrides variables already set, so set the macOS
+          # equivalents here: real cmake, clang flags, x86-only ggml options off (arm64 uses NEON automatically).
+          {
+            echo "CMAKE=$(command -v cmake)"
+            echo "CMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG"
+            echo "CMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG"
+            echo "CMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -DNDEBUG"
+            echo "CMAKE_CXX_FLAGS_RELWITHDEBINFO=-O3 -DNDEBUG"
+            for v in GGML_AVX GGML_AVX2 GGML_FMA GGML_F16C GGML_SSE42 GGML_BMI2; do echo "$v=OFF"; done
+            echo "GGML_NATIVE=OFF"
+          } >> "$GITHUB_ENV"
 
       # whisper base/small + yamnet/nmp into src-tauri/models/ (ONNX Runtime itself comes from the ort crate)
       - name: Fetch models
