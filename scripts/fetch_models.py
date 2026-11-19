@@ -58,6 +58,39 @@ def fetch_first(urls, out):
     sys.exit("download failed")
 
 
+def try_fetch(urls, out):
+    """Like fetch_first but returns None instead of exiting, so the caller can fall back."""
+    for u in urls:
+        r = subprocess.run(CURL + ["-o", out, u])
+        if r.returncode == 0 and _ok(out):
+            return u
+        if os.path.exists(out):
+            os.remove(out)
+    return None
+
+
+def ort_dylib_from_wheel(ver, dst):
+    """macOS fallback: the onnxruntime PyPI wheel always bundles onnxruntime/capi/libonnxruntime.<ver>.dylib
+    and pip picks the wheel for this machine's arch — no guessing of GitHub release asset names."""
+    wdir = tempfile.mkdtemp(prefix="ort-whl-")
+    r = subprocess.run([sys.executable, "-m", "pip", "download", f"onnxruntime=={ver}", "-d", wdir, "--only-binary=:all:", "--no-deps", "-q"])
+    whl = next((os.path.join(wdir, f) for f in os.listdir(wdir) if f.endswith(".whl")), None)
+    if r.returncode != 0 or not whl:
+        print(f"::error::onnxruntime {ver}: GitHub release assets 404 and the PyPI wheel download failed")
+        sys.exit("onnxruntime download failed")
+    with zipfile.ZipFile(whl) as z:
+        libs = [n for n in z.namelist() if os.path.basename(n).startswith("libonnxruntime") and n.endswith(".dylib")]
+        if not libs:
+            print(f"::error::no libonnxruntime*.dylib inside {os.path.basename(whl)}")
+            sys.exit("onnxruntime wheel has no dylib")
+        libs.sort(key=len, reverse=True)            # the versioned real file, not a bare symlink name
+        open(dst, "wb").write(z.read(libs[0]))
+        lic = [n for n in z.namelist() if os.path.basename(n) in ("LICENSE", "LICENSE.txt")]
+        if lic and not os.path.exists(os.path.join(DST, "ORT_LICENSE")):
+            open(os.path.join(DST, "ORT_LICENSE"), "wb").write(z.read(lic[0]))
+    print("  using wheel", os.path.basename(whl), "->", libs[0])
+
+
 os.makedirs(DST, exist_ok=True)
 for name, url in FILES.items():
     out = os.path.join(DST, name)
@@ -69,23 +102,33 @@ for name, url in FILES.items():
 
 # ONNX Runtime shared library — the build downloads the one for the host OS.
 if sys.platform == "darwin":
-    if not os.path.exists(os.path.join(DST, "libonnxruntime.dylib")):
+    dylib_dst = os.path.join(DST, "libonnxruntime.dylib")
+    if not os.path.exists(dylib_dst):
         print(f"downloading ONNX Runtime (macOS {_ORT_MAC_ARCH})")
         tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-osx.tgz")
-        # arch-specific first; the universal2 build is the fallback if that asset name is absent
+        # GitHub release tgz first (arch-specific, then universal2); asset names vary by version and
+        # 1.31.1 had neither (both 404 in CI), so the PyPI wheel is the reliable fallback.
         ort_u2 = f"https://github.com/microsoft/onnxruntime/releases/download/v{ORT_VER}/onnxruntime-osx-universal2-{ORT_VER}.tgz"
-        print("  using", fetch_first([ORT_MAC, ort_u2], tmp))
-        with tarfile.open(tmp) as t:
-            for m in t.getmembers():
-                base = os.path.basename(m.name)
-                # the real versioned dylib (not the symlink) → models/libonnxruntime.dylib
-                if m.isfile() and base.startswith("libonnxruntime.") and base.endswith(".dylib"):
-                    with t.extractfile(m) as f:
-                        open(os.path.join(DST, "libonnxruntime.dylib"), "wb").write(f.read())
-                elif base == "LICENSE" and not os.path.exists(os.path.join(DST, "ORT_LICENSE")):
-                    with t.extractfile(m) as f:
-                        open(os.path.join(DST, "ORT_LICENSE"), "wb").write(f.read())
-        os.remove(tmp)
+        got = try_fetch([ORT_MAC, ort_u2], tmp)
+        if got:
+            print("  using", got)
+            with tarfile.open(tmp) as t:
+                for m in t.getmembers():
+                    base = os.path.basename(m.name)
+                    # the real versioned dylib (not the symlink) → models/libonnxruntime.dylib
+                    if m.isfile() and base.startswith("libonnxruntime.") and base.endswith(".dylib"):
+                        with t.extractfile(m) as f:
+                            open(dylib_dst, "wb").write(f.read())
+                    elif base == "LICENSE" and not os.path.exists(os.path.join(DST, "ORT_LICENSE")):
+                        with t.extractfile(m) as f:
+                            open(os.path.join(DST, "ORT_LICENSE"), "wb").write(f.read())
+            os.remove(tmp)
+        else:
+            print("  GitHub release asset not found — falling back to the PyPI wheel")
+            ort_dylib_from_wheel(ORT_VER, dylib_dst)
+        if not _ok(dylib_dst):
+            print("::error::libonnxruntime.dylib was not produced")
+            sys.exit("onnxruntime missing")
 elif not os.path.exists(os.path.join(DST, "onnxruntime.dll")):
     print("downloading ONNX Runtime (Windows x64)")
     tmp = os.path.join(tempfile.gettempdir(), "onnxruntime-win-x64.zip")
