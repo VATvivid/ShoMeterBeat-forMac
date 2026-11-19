@@ -43,7 +43,17 @@ jobs:
         run: npm install
 
       - name: Build macOS app (.dmg)
-        run: npx tauri build --config src-tauri/tauri.macos.conf.json
+        run: |
+          set -o pipefail
+          npx tauri build --config src-tauri/tauri.macos.conf.json 2>&1 | tee build.log
+
+      # The step log needs auth to read; on failure replay the cause as annotations (visible via the API).
+      - name: Surface build errors
+        if: failure()
+        run: |
+          grep -nE "^error|error\[E|error:|failed to run custom build|CMake Error|panicked|could not compile|download" build.log | head -10 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          echo "::error::--- last 14 lines of build.log ---"
+          tail -14 build.log | while IFS= read -r l; do echo "::error::${l:0:900}"; done
 
       # no Apple Developer account: ad-hoc sign so the unsigned app opens (Gatekeeper still prompts once)
       - name: Ad-hoc sign .app
