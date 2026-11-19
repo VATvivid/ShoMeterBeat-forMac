@@ -33,13 +33,13 @@ interface MiniState { open: boolean; x?: number; y?: number; w?: number; h?: num
  */
 export function applyMiniFade(pct = modSetting("cozy", "miniFade", 0)) {
   const g = document.getElementById("grid");
-  // while the cursor is over the window (not editing) the picture goes at least 30 % see-through
-  // (2026-11-18 사용자: 마우스가 올라가면 투명도 30 %, 벗어나면 복구, 보간·페이드) — the change itself
-  // eases through the CSS transition on #grid (style.css)
+  // while the cursor is over the window (not editing) the picture goes at least 60 % see-through
+  // (2026-11-18 사용자: 마우스가 올라가면 투명도, 벗어나면 복구, 보간·페이드; 2026-11-19 사용자: 30→60 %) —
+  // the change itself eases through the CSS transition on #grid (style.css)
   const p = hovering ? Math.max(pct, HOVER_FADE) : pct;
   if (g) g.style.opacity = String(1 - Math.max(0, Math.min(90, p)) / 100);
 }
-const HOVER_FADE = 30;
+const HOVER_FADE = 60;
 let hovering = false;
 
 /** Cursor in mini-window CSS px and the dither-hole strength (0..1), read by the Cozy module. */

@@ -22,7 +22,8 @@ export class SubtitlesModule implements Module {
 
   private get on() { return modSetting(this.id, "on", false); }
   private get lang() { return modSetting(this.id, "lang", "auto"); }
-  private get model() { return modSetting(this.id, "model", "base"); }
+  // base·small 만 사용 (2026-11-19 사용자). 예전에 저장된 medium 등은 base 로 되돌린다.
+  private get model() { return (modSetting(this.id, "model", "base") as string) === "small" ? "small" : "base"; }
   private get fontPx() { return modSetting(this.id, "font", 14); }
   private get showTime() { return modSetting(this.id, "time", true); }
 
@@ -30,7 +31,7 @@ export class SubtitlesModule implements Module {
     return [
       { type: "toggle", label: "자막 (whisper)", value: this.on, onChange: (v) => setModSetting(this.id, "on", v) },
       { type: "select", label: "언어", value: this.lang, options: [["auto", "자동 감지"], ["ko", "한국어"], ["en", "English"], ["ja", "日本語"], ["zh", "中文"]].map(([v, l]) => ({ value: v, label: l })), onChange: (v) => setModSetting(this.id, "lang", v) },
-      { type: "select", label: "모델", value: this.model, options: [["base", "base (빠름, 148 MB)"], ["small", "small (정확, 488 MB)"], ["medium", "medium (느림, 1.5 GB)"]].map(([v, l]) => ({ value: v, label: l })), onChange: (v) => setModSetting(this.id, "model", v) },
+      { type: "select", label: "모델", value: this.model, options: [["base", "base (빠름, 148 MB)"], ["small", "small (정확, 488 MB)"]].map(([v, l]) => ({ value: v, label: l })), onChange: (v) => setModSetting(this.id, "model", v) },
       { type: "range", label: "글자 크기", value: this.fontPx, min: 11, max: 28, step: 1, format: (v) => `${v}px`, onChange: (v) => setModSetting(this.id, "font", v) },
       { type: "toggle", label: "시간 표시", value: this.showTime, onChange: (v) => setModSetting(this.id, "time", v) },
       { type: "action", label: "TXT로 저장…", onClick: () => this.export("txt") },

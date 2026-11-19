@@ -353,11 +353,12 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
     }
   });
 
-  // ---- narrow (left / right) dock: fold the whole toolbar into one ☰ tree menu -------
-  // A left/right strip is too narrow for the horizontal toolbar, so its controls were cut off
-  // (2026-11-18 사용자). When docked left/right the controls are relocated into the ☰ menu-panel,
-  // stacked vertically; each sub-menu (모듈/도킹/프리셋/창) opens inline (accordion tree) instead of as
-  // a clipped popover. Comment placeholders mark each control's home so it restores exactly on undock.
+  // ---- narrow toolbar: fold the whole toolbar into one ☰ tree menu -------------------
+  // A left/right strip (and, 2026-11-19 사용자, any normal/top window dragged too narrow) can't fit the
+  // horizontal toolbar, so its controls got cut off or covered by the – □ ✕ buttons. When it's too
+  // narrow the controls are relocated into the ☰ menu-panel, stacked vertically; each sub-menu
+  // (모듈/도킹/프리셋/창) opens inline (accordion tree) instead of as a clipped popover. Comment
+  // placeholders mark each control's home so it restores exactly when there's room again.
   {
     const menuBtn = $("menu-btn");
     const menuPanel = $("menu-panel");
@@ -383,9 +384,20 @@ export function initToolbar(grid: Grid, source: Source): Toolbar {
       if (on) { for (const h of home) { h.el.replaceWith(h.ph); menuPanel.appendChild(h.el); } }
       else { for (const h of home) h.ph.replaceWith(h.el); menuPanel.classList.add("hidden"); closeAllMenus(); }
     };
-    const apply = () => setCollapsed(document.body.dataset.dock === "left" || document.body.dataset.dock === "right");
+    // Collapse when docked left/right, OR when a normal/top window is narrower than the toolbar needs.
+    // Hysteresis (fold < 1040, unfold > 1080) stops it from flapping right at the edge. Top/bottom docks
+    // span the full screen width so they stay horizontal; a narrow free window now folds just like a strip.
+    const FOLD = 1040, UNFOLD = 1080;
+    const apply = () => {
+      const d = document.body.dataset.dock;
+      const vertDock = d === "left" || d === "right";
+      const w = window.innerWidth;
+      const narrow = collapsed ? w < UNFOLD : w < FOLD;
+      setCollapsed(vertDock || narrow);
+    };
     apply();
     new MutationObserver(apply).observe(document.body, { attributes: true, attributeFilter: ["data-dock"] });
+    window.addEventListener("resize", apply);
   }
 
   // ---- status bar ------------------------------------------------------------

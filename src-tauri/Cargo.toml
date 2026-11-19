@@ -36,9 +36,11 @@ env_logger = "0.11"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
 
 [features]
-default = []
-# Live subtitles (whisper.cpp). Needs CMake + LLVM/libclang at build time:
-#   npm run tauri build -- --features subtitles
+# Live subtitles (whisper.cpp) ship by default (2026-11-19 사용자: 빌드에 자막 포함).
+# Building therefore needs CMake + LLVM/libclang on the build machine:
+#   set LIBCLANG_PATH=C:\Program Files\LLVM\bin  and put cmake on PATH, then `npm run tauri build`.
+# To build without the whisper toolchain: `npm run tauri build -- --no-default-features`.
+default = ["subtitles"]
 subtitles = ["dep:whisper-rs"]
 
 [profile.release]

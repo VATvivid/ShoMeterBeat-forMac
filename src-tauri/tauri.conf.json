@@ -42,7 +42,8 @@
       "models/onnxruntime.dll",
       "models/onnxruntime_providers_shared.dll",
       "models/ORT_LICENSE",
-      "models/ggml-base.bin"
+      "models/ggml-base.bin",
+      "models/ggml-small.bin"
     ],
     "targets": [
       "nsis"
