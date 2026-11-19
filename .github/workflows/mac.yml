@@ -7,8 +7,10 @@ on:
 
 jobs:
   build:
-    # macos-14/15 (arm64) map to an xlarge SKU this account can't use; macos-13 is the standard Intel runner.
-    runs-on: macos-13
+    # Apple Silicon (arm64) standard runner — matches the target Macs. Free on public repos and within
+    # the included compute on a personal (non-enterprise) GitHub account. (On an enterprise-managed
+    # account macOS runners are policy-gated and this job just queues; run it from a personal account.)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -31,16 +33,24 @@ jobs:
           python3 -I -X utf8 scripts/fetch_models.py --whisper small
           ls -la src-tauri/models
 
+      # ShowMeterBeat Send plugin as macOS .clap/.vst3 bundles → src-tauri/plugins (shipped in the .dmg)
+      - name: Build DAW Send plugin (CLAP + VST3)
+        run: python3 -I -X utf8 scripts/bundle_plugin_macos.py
+
       - name: Install JS deps
         run: npm install
 
       - name: Build macOS app (.dmg)
         run: npx tauri build --config src-tauri/tauri.macos.conf.json
 
+      # no Apple Developer account: ad-hoc sign so the unsigned app opens (Gatekeeper still prompts once)
+      - name: Ad-hoc sign .app
+        run: codesign --force --deep -s - src-tauri/target/release/bundle/macos/ShowMeterBeat.app || true
+
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-x64-dmg
+          name: ShowMeterBeat-macos-arm64-dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
 
@@ -48,6 +58,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ShowMeterBeat-macos-x64-app
+          name: ShowMeterBeat-macos-arm64-app
           path: src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: warn
