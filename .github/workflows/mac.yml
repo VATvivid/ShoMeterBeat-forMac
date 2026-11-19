@@ -89,6 +89,27 @@ jobs:
       - name: Ad-hoc sign .app
         run: codesign --force --deep -s - src-tauri/target/release/bundle/macos/ShowMeterBeat.app || true
 
+      # Runtime smoke on the (real) macOS runner: the POSIX shared-memory bridge round-trips in-process,
+      # and the built .app launches and stays alive for 30 s; its log is replayed (RUST_LOG=info) so
+      # model-loading / capture errors show up here without needing a Mac in hand.
+      - name: Runtime smoke (rm-shm tests + launch app)
+        run: |
+          set +e
+          echo "== rm-shm tests (POSIX shm_open/mmap) =="
+          (cd crates/rm-shm && cargo test --release 2>&1 | tail -12); T=${PIPESTATUS[0]}
+          APP=src-tauri/target/release/bundle/macos/ShowMeterBeat.app
+          BIN="$(ls "$APP"/Contents/MacOS/* | head -1)"
+          echo "== bundle =="; file "$BIN"; ls "$APP/Contents/Resources" | head -40
+          echo "== launch $BIN =="
+          RUST_LOG=info "$BIN" > app.log 2>&1 &
+          PID=$!; sleep 30
+          if kill -0 "$PID" 2>/dev/null; then ALIVE=1; else ALIVE=0; fi
+          kill "$PID" 2>/dev/null; sleep 1
+          echo "== app.log =="; tail -80 app.log
+          echo "::notice::runtime smoke — app alive after 30s: $ALIVE, rm-shm tests exit: $T"
+          grep -iE "panick|error|실패|failed|denied" app.log | head -12 | while IFS= read -r l; do echo "::warning::app.log: ${l:0:900}"; done
+          [ "$ALIVE" = "1" ] && [ "$T" = "0" ]
+
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
         with:
