@@ -74,7 +74,15 @@ jobs:
       - name: Install JS deps
         run: npm install
 
+      # No Apple Developer account → ad-hoc identity "-": the bundler seals the .app BEFORE the .dmg is built,
+      # so the app inside the dmg is signed. An unsealed bundle downloaded on Apple Silicon is refused by
+      # Gatekeeper as "damaged" with no override; an ad-hoc sealed one gets the "Open Anyway" path instead.
+      # Notarization is skipped (no credentials); the dmg itself stays unsigned (bundler skips it for "-").
+      # hardenedRuntime is off in tauri.macos.conf.json: it is only needed for notarization and would add
+      # entitlement requirements (microphone etc.) to the ad-hoc build.
       - name: Build macOS app (.dmg)
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
         run: |
           set -o pipefail
           npx tauri build --config src-tauri/tauri.macos.conf.json 2>&1 | tee build.log
@@ -87,9 +95,18 @@ jobs:
           echo "::error::--- last 14 lines of build.log ---"
           tail -14 build.log | while IFS= read -r l; do echo "::error::${l:0:900}"; done
 
-      # no Apple Developer account: ad-hoc sign so the unsigned app opens (Gatekeeper still prompts once)
-      - name: Ad-hoc sign .app
-        run: codesign --force --deep -s - src-tauri/target/release/bundle/macos/ShowMeterBeat.app || true
+      # Prove the seal is on the .app and on the copy inside the .dmg (the thing users actually download).
+      - name: Verify ad-hoc signature (.app and inside .dmg)
+        run: |
+          APP=src-tauri/target/release/bundle/macos/ShowMeterBeat.app
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "^(Identifier|Signature|CodeDirectory|Sealed Resources)" || true
+          DMG="$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)"
+          MNT="$(hdiutil attach -nobrowse -readonly "$DMG" | grep -o '/Volumes/.*' | head -1)"
+          echo "mounted: $MNT"; ls "$MNT"
+          codesign --verify --deep --strict --verbose=2 "$MNT/ShowMeterBeat.app"
+          echo "::notice::ad-hoc signature verified on .app and inside $(basename "$DMG")"
+          hdiutil detach "$MNT"
 
       # Runtime smoke on the (real) macOS runner: the POSIX shared-memory bridge round-trips in-process,
       # and the built .app launches and stays alive for 30 s; its log is replayed (RUST_LOG=info) so
