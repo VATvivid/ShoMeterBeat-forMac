@@ -11,6 +11,10 @@ jobs:
     # the included compute on a personal (non-enterprise) GitHub account. (On an enterprise-managed
     # account macOS runners are policy-gated and this job just queues; run it from a personal account.)
     runs-on: macos-latest
+    # contents:write — the dmg is published to a GitHub Release (public download, no GitHub login needed;
+    # Actions artifacts need a login and api.github.com is blocked on the office network).
+    permissions:
+      contents: write
     # ScreenCaptureKit system-audio capture (mac-syscapture) is a default feature now that it builds and
     # passes the runtime smoke; one variant only.
     steps:
@@ -135,6 +139,34 @@ jobs:
           name: ShowMeterBeat-macos-arm64-dmg
           path: src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+      # Public download link: https://github.com/<owner>/<repo>/releases/download/mac-v<version>/<dmg>
+      # One release per app version (tag mac-v<version>); a rebuild of the same version replaces the asset.
+      - name: Publish .dmg to GitHub Release
+        id: relinfo
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          DMG="$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$(basename "$DMG")" >> "$GITHUB_OUTPUT"
+          shasum -a 256 "$DMG" | tee dmg.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mac-v${{ steps.relinfo.outputs.version }}
+          name: ShowMeterBeat ${{ steps.relinfo.outputs.version }} (macOS Apple Silicon)
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: |
+            ${{ steps.relinfo.outputs.dmg }}
+            dmg.sha256
+          body: |
+            ShowMeterBeat ${{ steps.relinfo.outputs.version }} — macOS 14 이상, Apple Silicon(arm64). 빌드 커밋 `${{ github.sha }}`.
+
+            설치: `${{ steps.relinfo.outputs.dmg_name }}`을 열고 ShowMeterBeat를 Applications로 끌어 놓습니다.
+            첫 실행에서 "확인되지 않은 개발자" 경고가 뜨면 시스템 설정 → 개인정보 보호 및 보안 → **그래도 열기**를 한 번 누릅니다(ad-hoc 서명, Apple 공증 없음).
+            "손상되어 열 수 없음"이 뜨면 터미널에서 `xattr -cr /Applications/ShowMeterBeat.app` 후 다시 엽니다.
+            처음 소리를 받을 때 화면 기록 권한을 허용한 뒤 장치를 다시 고르면 미터가 움직입니다.
 
       - name: Upload .app (fallback)
         if: always()
